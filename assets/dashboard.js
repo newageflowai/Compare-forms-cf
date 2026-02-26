@@ -11,11 +11,9 @@ const statusEl = document.getElementById("formStatus");
 const recentBody = document.getElementById("recentBody");
 const refreshBtn = document.getElementById("refreshBtn");
 
-function show(el){ el.classList.remove("hide"); }
-function hide(el){ el.classList.add("hide"); }
-
 async function requireSession(){
-  const { data: { session } } = await supabase.auth.getSession();
+  const { data: { session }, error } = await supabase.auth.getSession();
+  if (error) throw error;
   if (!session?.user) window.location.href = "/";
   return session.user;
 }
@@ -28,7 +26,8 @@ async function loadProfile(userId){
     .single();
 
   if (error) throw error;
-  if (data.is_active === false) {
+
+  if (data?.is_active === false) {
     await supabase.auth.signOut();
     alert("Account disabled. Contact admin.");
     window.location.href = "/";
@@ -53,7 +52,6 @@ function wireTabs(){
 async function loadRecent(profile){
   recentBody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
 
-  // Pull small recent sets from each table and merge client-side
   const tables = [
     { name: "form_safe", type: "SAFE", dateField: "form_date", empField: "employee_name", notesField: "notes" },
     { name: "form_loteria", type: "LOTERIA", dateField: "form_date", empField: "employee_name", notesField: "notes" },
@@ -70,20 +68,22 @@ async function loadRecent(profile){
       .order("created_at", { ascending: false })
       .limit(10);
 
-    // org filter is enforced by RLS already; but we can also filter if user has org set
     if (profile.role !== "admin" && profile.org_id) q = q.eq("org_id", profile.org_id);
 
     const { data, error } = await q;
-    if (!error && data) {
-      data.forEach(r => results.push({
-        id: r.id,
-        created_at: r.created_at,
-        type: t.type,
-        date: r[t.dateField] || "",
-        employee: r[t.empField] || "",
-        notes: r[t.notesField] || ""
-      }));
+    if (error) {
+      // show the first real error we hit
+      recentBody.innerHTML = `<tr><td colspan="6" class="muted">Error loading: ${t.name} — ${error.message}</td></tr>`;
+      return;
     }
+    (data || []).forEach(r => results.push({
+      id: r.id,
+      created_at: r.created_at,
+      type: t.type,
+      date: r[t.dateField] || "",
+      employee: r[t.empField] || "",
+      notes: r[t.notesField] || ""
+    }));
   }
 
   results.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
@@ -107,41 +107,44 @@ async function loadRecent(profile){
 }
 
 (async function init(){
-  const user = await requireSession();
-  const profile = await loadProfile(user.id);
+  try {
+    const user = await requireSession();
+    const profile = await loadProfile(user.id);
 
-  whoEl.textContent = `${profile.email} • role=${profile.role} • org=${profile.org_id ? profile.org_id.slice(0,8)+"…" : "(none)"}`;
+    whoEl.textContent =
+      `${profile.email} • role=${profile.role} • org=${profile.org_id ? profile.org_id.slice(0,8)+"…" : "(none)"}`;
 
-  if (profile.role === "admin") adminLink.style.display = "inline-flex";
+    if (profile.role === "admin") adminLink.style.display = "inline-flex";
 
-  // If no org assigned, block form submits (common on fresh signup)
-  if (!profile.org_id && profile.role !== "admin") {
-    setStatus(statusEl, "err", "❌ No organization assigned. Ask admin to assign your org in Admin → Users.");
+    if (!profile.org_id && profile.role !== "admin") {
+      setStatus(statusEl, "err", "❌ No organization assigned. Ask admin to assign your org in Admin → Users.");
+    }
+
+    renderSafe(document.getElementById("panel-safe"));
+    renderLoteria(document.getElementById("panel-loteria"));
+    renderCashPayment(document.getElementById("panel-cashpay"));
+    renderTransfer(document.getElementById("panel-transfer"));
+    renderDaily(document.getElementById("panel-daily"));
+
+    wireTabs();
+    await submitHandlers({ profile, statusEl });
+
+    await loadRecent(profile);
+    refreshBtn.addEventListener("click", () => loadRecent(profile));
+
+    logoutBtn.addEventListener("click", async () => {
+      await supabase.auth.signOut();
+      window.location.href = "/";
+    });
+
+    supabase.auth.onAuthStateChange((_evt, session) => {
+      if (!session?.user) window.location.href = "/";
+    });
+
+  } catch (err) {
+    console.error(err);
+    whoEl.textContent = "❌ " + (err?.message || String(err));
+    // also show it in the table area
+    recentBody.innerHTML = `<tr><td colspan="6" class="muted">❌ ${err?.message || String(err)}</td></tr>`;
   }
-
-  // Render panels
-  renderSafe(document.getElementById("panel-safe"));
-  renderLoteria(document.getElementById("panel-loteria"));
-  renderCashPayment(document.getElementById("panel-cashpay"));
-  renderTransfer(document.getElementById("panel-transfer"));
-  renderDaily(document.getElementById("panel-daily"));
-
-  wireTabs();
-
-  // Wire submit handlers
-  await submitHandlers({ profile, statusEl });
-
-  // Recent
-  await loadRecent(profile);
-
-  refreshBtn.addEventListener("click", () => loadRecent(profile));
-
-  logoutBtn.addEventListener("click", async () => {
-    await supabase.auth.signOut();
-    window.location.href = "/";
-  });
-
-  supabase.auth.onAuthStateChange((_evt, session) => {
-    if (!session?.user) window.location.href = "/";
-  });
 })();
