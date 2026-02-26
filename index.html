@@ -1,88 +1,12 @@
-const path = require("path");
-const sqlite3 = require("sqlite3").verbose();
-
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, "app.db");
-const db = new sqlite3.Database(DB_PATH);
-
-function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) return reject(err);
-      resolve({ lastID: this.lastID, changes: this.changes });
-    });
-  });
-}
-
-function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) return reject(err);
-      resolve(row);
-    });
-  });
-}
-
-function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) return reject(err);
-      resolve(rows);
-    });
-  });
-}
-
-async function init() {
-  // Users + Orgs
-  await run(`
-    CREATE TABLE IF NOT EXISTS organizations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-
-  await run(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      org_id INTEGER,
-      name TEXT NOT NULL,
-      email TEXT NOT NULL UNIQUE,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('admin','user')) DEFAULT 'user',
-      is_active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY(org_id) REFERENCES organizations(id)
-    )
-  `);
-
-  // Safe form (Cuadre del Safe)
-  await run(`
-    CREATE TABLE IF NOT EXISTS form_safe (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      org_id INTEGER,
-      created_by INTEGER NOT NULL,
-      date TEXT NOT NULL,
-      time TEXT,
-      employee_name TEXT,
-      bills_100_qty INTEGER DEFAULT 0,
-      bills_50_qty INTEGER DEFAULT 0,
-      bills_20_qty INTEGER DEFAULT 0,
-      bills_10_qty INTEGER DEFAULT 0,
-      bills_5_qty INTEGER DEFAULT 0,
-      bills_1_qty INTEGER DEFAULT 0,
-      reg1_amount_cents INTEGER DEFAULT 0,
-      reg2_amount_cents INTEGER DEFAULT 0,
-      quarters_qty INTEGER DEFAULT 0,
-      dimes_qty INTEGER DEFAULT 0,
-      nickels_qty INTEGER DEFAULT 0,
-      pennies_qty INTEGER DEFAULT 0,
-      notes TEXT,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY(org_id) REFERENCES organizations(id),
-      FOREIGN KEY(created_by) REFERENCES users(id)
-    )
-  `);
-
-  // Loteria form (Cuadre de Loteria)
-  await run(`
-    CREATE TABLE IF NOT EXISTS form_loteria (
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Compare Forms</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
