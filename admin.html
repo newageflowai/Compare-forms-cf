@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Compare Forms | Admin</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1>Admin</h1>
+        <div class="muted">Create organizations and assign users to orgs + roles.</div>
+      </div>
+
+      <div class="actions">
+        <a class="btn secondary" href="/dashboard.html">Back</a>
+        <button class="btn secondary" id="logoutBtn" type="button">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="tabs">
+        <button class="tab active" data-tab="orgs">Organizations</button>
+        <button class="tab" data-tab="users">Users</button>
+      </div>
+
+      <div id="panel-orgs" class="panel">
+        <div class="row">
+          <div>
+            <label>New Organization Name</label>
+            <input id="newOrgName" placeholder="Compare Foods - Monroe" />
+            <div class="actions" style="margin-top:10px">
+              <button class="btn" id="createOrgBtn" type="button">Create</button>
+              <button class="btn secondary" id="refreshOrgsBtn" type="button">Refresh</button>
+            </div>
+          </div>
+          <div>
+            <div class="muted">Existing orgs</div>
+            <div style="overflow:auto;margin-top:10px">
+              <table>
+                <thead><tr><th>Name</th><th>ID</th></tr></thead>
+                <tbody id="orgsBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="panel-users" class="panel hide">
+        <div class="actions" style="justify-content:space-between">
+          <div class="muted">Assign role and org. Only admins can access this page.</div>
+          <button class="btn secondary" id="refreshUsersBtn" type="button">Refresh</button>
+        </div>
+
+        <div style="overflow:auto;margin-top:10px">
+          <table>
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Org</th>
+                <th>Active</th>
+                <th>Save</th>
+              </tr>
+            </thead>
+            <tbody id="usersBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="adminStatus" class="status" role="status" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/assets/admin.js"></script>
+</body>
+</html>
