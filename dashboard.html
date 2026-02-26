@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Compare Forms | Dashboard</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1>Dashboard</h1>
+        <div class="muted" id="whoami">Loading…</div>
+      </div>
+
+      <div class="actions">
+        <a class="btn secondary" href="/admin.html" id="adminLink" style="display:none">Admin</a>
+        <button class="btn secondary" id="logoutBtn" type="button">Logout</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="tabs">
+        <button class="tab active" data-tab="safe">Cuadre del Safe</button>
+        <button class="tab" data-tab="loteria">Cuadre de Lotería</button>
+        <button class="tab" data-tab="cashpay">Cash Payment</button>
+        <button class="tab" data-tab="transfer">Transfer / Shrinkage</button>
+        <button class="tab" data-tab="daily">Cuadre Diario</button>
+      </div>
+
+      <div id="panel-safe" class="panel"></div>
+      <div id="panel-loteria" class="panel hide"></div>
+      <div id="panel-cashpay" class="panel hide"></div>
+      <div id="panel-transfer" class="panel hide"></div>
+      <div id="panel-daily" class="panel hide"></div>
+
+      <div id="formStatus" class="status" role="status" aria-live="polite"></div>
+    </div>
+
+    <div class="card">
+      <div class="actions" style="justify-content:space-between">
+        <div>
+          <h2 style="margin:0">Recent Entries</h2>
+          <div class="muted">Shows latest submissions for your org (admin sees all).</div>
+        </div>
+        <button class="btn secondary" id="refreshBtn" type="button">Refresh</button>
+      </div>
+
+      <div style="overflow:auto;margin-top:10px">
+        <table>
+          <thead>
+            <tr>
+              <th>When</th>
+              <th>Type</th>
+              <th>Date</th>
+              <th>Employee</th>
+              <th>Notes</th>
+              <th>ID</th>
+            </tr>
+          </thead>
+          <tbody id="recentBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/assets/dashboard.js"></script>
+</body>
+</html>
