@@ -1,24 +1,40 @@
-import { supabase } from "./supabaseClient.js";
-import {
-  renderSafe, renderLoteria, renderCashPayment, renderTransfer, renderDaily,
-  submitHandlers, setStatus, clearStatus
-} from "./forms.js";
+import { supabase } from "/assets/supabase.js";
 
-const whoEl = document.getElementById("whoami");
-const logoutBtn = document.getElementById("logoutBtn");
+const whoami = document.getElementById("whoami");
 const adminLink = document.getElementById("adminLink");
-const statusEl = document.getElementById("formStatus");
-const recentBody = document.getElementById("recentBody");
+const logoutBtn = document.getElementById("logoutBtn");
 const refreshBtn = document.getElementById("refreshBtn");
+const recentBody = document.getElementById("recentBody");
+const formStatus = document.getElementById("formStatus");
 
-async function requireSession(){
-  const { data: { session }, error } = await supabase.auth.getSession();
-  if (error) throw error;
-  if (!session?.user) window.location.href = "/";
-  return session.user;
+function setStatus(type, msg) {
+  if (!formStatus) return;
+  formStatus.className = "status " + (type || "");
+  formStatus.textContent = msg || "";
 }
 
-async function loadProfile(userId){
+function escapeHtml(str) {
+  return String(str || "").replace(/[&<>"']/g, s => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  }[s]));
+}
+
+function fmtDate(iso) {
+  try { return new Date(iso).toLocaleString(); } catch { return iso || ""; }
+}
+
+async function requireSession() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user) {
+    // not logged in -> send to login page
+    window.location.href = "/index.html";
+    return null;
+  }
+  return session;
+}
+
+async function loadMyProfile(userId) {
+  // This must be allowed by RLS for the logged-in user (select own row)
   const { data, error } = await supabase
     .from("profiles")
     .select("id,email,role,org_id,is_active")
@@ -26,125 +42,114 @@ async function loadProfile(userId){
     .single();
 
   if (error) throw error;
-
-  if (data?.is_active === false) {
-    await supabase.auth.signOut();
-    alert("Account disabled. Contact admin.");
-    window.location.href = "/";
-  }
   return data;
 }
 
-function wireTabs(){
-  document.querySelectorAll(".tab").forEach(btn => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-      btn.classList.add("active");
-
-      const key = btn.getAttribute("data-tab");
-      document.querySelectorAll(".panel").forEach(p => p.classList.add("hide"));
-      document.getElementById(`panel-${key}`).classList.remove("hide");
-      clearStatus(statusEl);
-    });
-  });
+function showAdminButtonIfAdmin(profile) {
+  const role = String(profile?.role || "").toLowerCase();
+  if (role === "admin") {
+    adminLink.style.display = "";   // show
+  } else {
+    adminLink.style.display = "none";
+  }
 }
 
-async function loadRecent(profile){
-  recentBody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
+async function loadRecentEntries(profile) {
+  // NOTE: This depends on your DB schema.
+  // If you have a "recent_entries" view/table, use that.
+  // Otherwise, you can union from your form tables later.
 
-  const tables = [
-    { name: "form_safe", type: "SAFE", dateField: "form_date", empField: "employee_name", notesField: "notes" },
-    { name: "form_loteria", type: "LOTERIA", dateField: "form_date", empField: "employee_name", notesField: "notes" },
-    { name: "form_cash_payment", type: "CASHPAY", dateField: "pay_date", empField: "given_to", notesField: "reason" },
-    { name: "form_transfer", type: "TRANSFER", dateField: "transfer_date", empField: "description", notesField: "dept_from" },
-    { name: "form_daily", type: "DAILY", dateField: "form_date", empField: "responsible", notesField: "notes" },
-  ];
+  recentBody.innerHTML = `<tr><td colspan="6" class="muted">No data yet.</td></tr>`;
+  setStatus("", "");
 
-  const results = [];
+  // If you already have a view/table like "recent_entries", use this:
+  // Columns assumed: created_at, type, date, employee_name, notes, id, org_id
+  const role = String(profile?.role || "").toLowerCase();
+  const orgId = profile?.org_id ?? null;
 
-  for (const t of tables) {
-    let q = supabase.from(t.name)
-      .select(`id, created_at, ${t.dateField}, ${t.empField}, ${t.notesField}, org_id`)
-      .order("created_at", { ascending: false })
-      .limit(10);
+  let q = supabase
+    .from("recent_entries")  // <-- change this if your table/view is named differently
+    .select("id, created_at, type, date, employee_name, notes, org_id")
+    .order("created_at", { ascending: false })
+    .limit(25);
 
-    if (profile.role !== "admin" && profile.org_id) q = q.eq("org_id", profile.org_id);
-
-    const { data, error } = await q;
-    if (error) {
-      // show the first real error we hit
-      recentBody.innerHTML = `<tr><td colspan="6" class="muted">Error loading: ${t.name} — ${error.message}</td></tr>`;
-      return;
-    }
-    (data || []).forEach(r => results.push({
-      id: r.id,
-      created_at: r.created_at,
-      type: t.type,
-      date: r[t.dateField] || "",
-      employee: r[t.empField] || "",
-      notes: r[t.notesField] || ""
-    }));
+  // Non-admin only sees their org
+  if (role !== "admin") {
+    q = q.eq("org_id", orgId);
   }
 
-  results.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
-  const top = results.slice(0, 25);
+  const { data, error } = await q;
 
-  if (!top.length) {
-    recentBody.innerHTML = `<tr><td colspan="6" class="muted">No entries yet.</td></tr>`;
+  if (error) {
+    // If you don’t have the view/table yet, you’ll see an error here.
+    setStatus("err", "❌ " + error.message);
+    recentBody.innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(error.message)}</td></tr>`;
     return;
   }
 
-  recentBody.innerHTML = top.map(r => `
+  if (!data || data.length === 0) {
+    recentBody.innerHTML = `<tr><td colspan="6" class="muted">No recent entries.</td></tr>`;
+    return;
+  }
+
+  recentBody.innerHTML = data.map(r => `
     <tr>
-      <td>${new Date(r.created_at).toLocaleString()}</td>
-      <td>${r.type}</td>
-      <td>${r.date || ""}</td>
-      <td>${String(r.employee || "").slice(0, 40)}</td>
-      <td>${String(r.notes || "").slice(0, 60)}</td>
-      <td class="small">${r.id.slice(0,8)}…</td>
+      <td>${fmtDate(r.created_at)}</td>
+      <td>${escapeHtml(r.type)}</td>
+      <td>${escapeHtml(r.date)}</td>
+      <td>${escapeHtml(r.employee_name)}</td>
+      <td>${escapeHtml(r.notes)}</td>
+      <td class="mono">${escapeHtml(r.id)}</td>
     </tr>
   `).join("");
 }
 
-(async function init(){
+async function init() {
   try {
-    const user = await requireSession();
-    const profile = await loadProfile(user.id);
+    const session = await requireSession();
+    if (!session) return;
 
-    whoEl.textContent =
-      `${profile.email} • role=${profile.role} • org=${profile.org_id ? profile.org_id.slice(0,8)+"…" : "(none)"}`;
+    setStatus("", "");
+    whoami.textContent = "Loading…";
 
-    if (profile.role === "admin") adminLink.style.display = "inline-flex";
+    const profile = await loadMyProfile(session.user.id);
 
-    if (!profile.org_id && profile.role !== "admin") {
-      setStatus(statusEl, "err", "❌ No organization assigned. Ask admin to assign your org in Admin → Users.");
+    // Optional: block inactive
+    if (profile?.is_active === false) {
+      whoami.textContent = "Account disabled";
+      adminLink.style.display = "none";
+      setStatus("err", "❌ Your account has been deactivated.");
+      await supabase.auth.signOut();
+      window.location.href = "/index.html";
+      return;
     }
 
-    renderSafe(document.getElementById("panel-safe"));
-    renderLoteria(document.getElementById("panel-loteria"));
-    renderCashPayment(document.getElementById("panel-cashpay"));
-    renderTransfer(document.getElementById("panel-transfer"));
-    renderDaily(document.getElementById("panel-daily"));
+    // Show name/email + org
+    whoami.textContent = `Signed in as ${profile.email || session.user.email} • Role: ${String(profile.role || "user").toUpperCase()}`;
 
-    wireTabs();
-    await submitHandlers({ profile, statusEl });
+    // ✅ Show Admin button only for admin
+    showAdminButtonIfAdmin(profile);
 
-    await loadRecent(profile);
-    refreshBtn.addEventListener("click", () => loadRecent(profile));
+    // Load recent entries
+    await loadRecentEntries(profile);
 
-    logoutBtn.addEventListener("click", async () => {
-      await supabase.auth.signOut();
-      window.location.href = "/";
-    });
-
-    supabase.auth.onAuthStateChange((_evt, session) => {
-      if (!session?.user) window.location.href = "/";
-    });
-
-  } catch (err) {
-    console.error(err);
-    whoEl.textContent = "❌ " + (err?.message || String(err));
-    // also show it in the table area
-    recentBody.innerHTML = `<tr><td colspan="6" class="muted">❌ ${err?.message || String(err)}</td></tr>`;
+  } catch (e) {
+    console.error(e);
+    whoami.textContent = "Error";
+    setStatus("err", "❌ " + (e?.message || "Failed to load"));
   }
-})();
+}
+
+logoutBtn.addEventListener("click", async () => {
+  await supabase.auth.signOut();
+  window.location.href = "/index.html";
+});
+
+refreshBtn?.addEventListener("click", init);
+
+// Re-run when auth changes (login/logout in another tab)
+supabase.auth.onAuthStateChange((_event, _session) => {
+  init();
+});
+
+init();
