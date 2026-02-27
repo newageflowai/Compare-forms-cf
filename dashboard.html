@@ -16,6 +16,7 @@
 
       <div class="actions">
         <a class="btn secondary" href="/admin.html" id="adminLink" style="display:none">Admin</a>
+        <button class="btn secondary" id="profileBtn" type="button">Profile</button>
         <button class="btn secondary" id="logoutBtn" type="button">Logout</button>
       </div>
     </div>
@@ -47,6 +48,8 @@
         <button class="btn secondary" id="refreshBtn" type="button">Refresh</button>
       </div>
 
+      <div id="recentStatus" class="status" role="status" aria-live="polite"></div>
+
       <div style="overflow:auto;margin-top:10px">
         <table>
           <thead>
@@ -61,6 +64,37 @@
           </thead>
           <tbody id="recentBody"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- PROFILE MODAL -->
+  <div id="profileOverlay" class="modalOverlay hide" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="profileTitle">
+      <div class="modalHeader">
+        <div>
+          <h2 id="profileTitle" style="margin:0">Profile</h2>
+          <div class="muted">Update your name used on forms.</div>
+        </div>
+        <button id="closeProfileBtn" class="smallBtn" type="button">Close</button>
+      </div>
+
+      <div id="profileStatus" class="status" role="status" aria-live="polite"></div>
+
+      <div class="row">
+        <div>
+          <label for="profileFirst">First name</label>
+          <input id="profileFirst" autocomplete="given-name" placeholder="First name" />
+        </div>
+        <div>
+          <label for="profileLast">Last name</label>
+          <input id="profileLast" autocomplete="family-name" placeholder="Last name" />
+        </div>
+      </div>
+
+      <div class="actions" style="margin-top:12px">
+        <button id="saveProfileBtn" class="btn" type="button">Save</button>
+        <button id="cancelProfileBtn" class="btn secondary" type="button">Cancel</button>
       </div>
     </div>
   </div>
