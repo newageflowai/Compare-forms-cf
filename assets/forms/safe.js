@@ -21,10 +21,12 @@ const DENOMS = {
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 function n0(v){ const x = Number(v); return Number.isFinite(x) ? x : 0; }
 function int0(v){ return Math.max(0, Math.trunc(n0(v))); }
+
 function toCents(v){
   const x = n0(String(v).replace(/[$,]/g,""));
   return Number.isFinite(x) ? Math.round(x * 100) : 0;
 }
+
 function money(cents){
   const v = (Number(cents) || 0) / 100;
   return v.toLocaleString(undefined, { style:"currency", currency:"USD" });
@@ -39,7 +41,7 @@ function rowInput({ id, label, placeholder = "", type="text" }){
   `;
 }
 
-function qtyRow({ key, label, unitCents }){
+function qtyRow({ key, label }){
   const id = `safe_${key}`;
   const amtId = `safe_amt_${key}`;
   return `
@@ -53,8 +55,36 @@ function qtyRow({ key, label, unitCents }){
   `;
 }
 
+// === date/time helpers for <input type="date"> and <input type="time">
+function pad2(n){ return String(n).padStart(2, "0"); }
+function nowLocalDateValue(d = new Date()){
+  // YYYY-MM-DD
+  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+}
+function nowLocalTimeValue(d = new Date()){
+  // HH:MM (24h)
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+// Employee display name from profile
+function defaultEmployeeName(ctx){
+  const first = (ctx?.profile?.first_name || "").trim();
+  const last  = (ctx?.profile?.last_name || "").trim();
+
+  // You asked: autopopulate with first name
+  if (first) return first;
+
+  const full = `${first} ${last}`.trim();
+  if (full) return full;
+
+  const email = (ctx?.user?.email || "").trim();
+  if (email.includes("@")) return email.split("@")[0];
+
+  return "";
+}
+
 export function mountSafeForm(container, ctx){
-  // ctx: { profile: { org_id, role }, user }
+  // ctx: { profile: { org_id, role, first_name, last_name }, user }
   container.innerHTML = `
     <form id="safeForm">
       <div class="grid2">
@@ -75,7 +105,7 @@ export function mountSafeForm(container, ctx){
             </tr>
           </thead>
           <tbody>
-            ${DENOMS.bills.map(b => qtyRow({ key:b.key, label:b.label, unitCents:b.valueCents })).join("")}
+            ${DENOMS.bills.map(b => qtyRow({ key:b.key, label:b.label })).join("")}
           </tbody>
           <tfoot>
             <tr>
@@ -109,7 +139,7 @@ export function mountSafeForm(container, ctx){
             </tr>
           </thead>
           <tbody>
-            ${DENOMS.coins.map(c => qtyRow({ key:c.key, label:c.label, unitCents:c.valueCents })).join("")}
+            ${DENOMS.coins.map(c => qtyRow({ key:c.key, label:c.label })).join("")}
           </tbody>
           <tfoot>
             <tr>
@@ -193,6 +223,19 @@ export function mountSafeForm(container, ctx){
     return { bills, reg1, reg2, coins, total: bills + regs + coins };
   }
 
+  function setDateTimeNow(){
+    const d = new Date();
+    dateEl.value = nowLocalDateValue(d);
+    timeEl.value = nowLocalTimeValue(d);
+  }
+
+  function prefillEmployee(){
+    // only fill if empty (don’t overwrite if user already typed)
+    if (!empEl.value.trim()) {
+      empEl.value = defaultEmployeeName(ctx);
+    }
+  }
+
   // live calc
   container.querySelectorAll("input,textarea").forEach(el => {
     el.addEventListener("input", () => { calc(); clearStatus(); });
@@ -201,13 +244,21 @@ export function mountSafeForm(container, ctx){
   // clear
   container.querySelector("#safe_clear").addEventListener("click", () => {
     form.reset();
+
     // force all qty inputs to 0 (reset may set empty)
     [...DENOMS.bills, ...DENOMS.coins].forEach(x => {
       const el = container.querySelector(`#safe_${x.key}`);
       if (el) el.value = "0";
     });
+
     reg1El.value = "";
     reg2El.value = "";
+    notesEl.value = "";
+
+    // re-apply defaults
+    setDateTimeNow();
+    prefillEmployee();
+
     calc();
     clearStatus();
   });
@@ -217,26 +268,27 @@ export function mountSafeForm(container, ctx){
     e.preventDefault();
     clearStatus();
 
-    const date = (dateEl.value || "").trim();
-    const time = (timeEl.value || "").trim();
+    // IMPORTANT: DB columns are form_date + form_time
+    const form_date = (dateEl.value || "").trim();
+    const form_time = (timeEl.value || "").trim();
     const employee_name = (empEl.value || "").trim();
     const notes = (notesEl.value || "").trim();
 
     if (!ctx?.user?.id) return setStatus("err", "❌ Not logged in.");
-    if (!ctx?.profile?.org_id && ctx?.profile?.role !== "admin") {
-      return setStatus("err", "❌ Your profile has no org assigned. Admin must assign your org.");
-    }
-    if (!date) return setStatus("err", "❌ Date is required.");
+    if (!ctx?.profile?.org_id) return setStatus("err", "❌ Your profile has no org assigned. Admin must assign your org.");
+    if (!form_date) return setStatus("err", "❌ Date is required.");
     if (!employee_name) return setStatus("err", "❌ Employee name is required.");
 
     const computed = calc();
 
-    // Build payload
+    // Build payload (match your schema)
     const payload = {
-      org_id: ctx.profile.role === "admin" ? (ctx.profile.org_id ?? null) : ctx.profile.org_id,
+      org_id: ctx.profile.org_id,
       created_by: ctx.user.id,
-      date,
-      time: time || null,
+
+      form_date,
+      form_time: form_time || null,
+
       employee_name,
       reg1_amount_cents: computed.reg1,
       reg2_amount_cents: computed.reg2,
@@ -264,7 +316,21 @@ export function mountSafeForm(container, ctx){
       if (error) throw error;
 
       setStatus("ok", `✅ Saved. Entry ID: ${data.id}`);
-      // Let dashboard refresh recent entries if it listens for this event
+
+      // set new defaults after save (your request)
+      setDateTimeNow();
+      prefillEmployee();
+
+      // optionally clear money fields after save (comment out if you want to keep values)
+      // [...DENOMS.bills, ...DENOMS.coins].forEach(x => {
+      //   const el = container.querySelector(`#safe_${x.key}`);
+      //   if (el) el.value = "0";
+      // });
+      // reg1El.value = "";
+      // reg2El.value = "";
+      // notesEl.value = "";
+      // calc();
+
       window.dispatchEvent(new CustomEvent("forms:saved", { detail: { type:"safe", id:data.id } }));
     } catch (err) {
       console.error(err);
@@ -274,11 +340,17 @@ export function mountSafeForm(container, ctx){
     }
   });
 
-  // initial calc
+  // ===== initial defaults =====
   // default qty inputs to 0
   [...DENOMS.bills, ...DENOMS.coins].forEach(x => {
     const el = container.querySelector(`#safe_${x.key}`);
     if (el && (el.value === "" || el.value == null)) el.value = "0";
   });
+
+  // auto-fill date/time + employee
+  setDateTimeNow();
+  prefillEmployee();
+
+  // initial calc
   calc();
 }
