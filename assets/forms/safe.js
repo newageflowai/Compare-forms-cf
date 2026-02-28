@@ -21,12 +21,10 @@ const DENOMS = {
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 function n0(v){ const x = Number(v); return Number.isFinite(x) ? x : 0; }
 function int0(v){ return Math.max(0, Math.trunc(n0(v))); }
-
 function toCents(v){
-  const x = n0(String(v).replace(/[$,]/g,""));
+  const x = n0(String(v ?? "").replace(/[$,]/g,""));
   return Number.isFinite(x) ? Math.round(x * 100) : 0;
 }
-
 function money(cents){
   const v = (Number(cents) || 0) / 100;
   return v.toLocaleString(undefined, { style:"currency", currency:"USD" });
@@ -55,36 +53,33 @@ function qtyRow({ key, label }){
   `;
 }
 
-// === date/time helpers for <input type="date"> and <input type="time">
-function pad2(n){ return String(n).padStart(2, "0"); }
-function nowLocalDateValue(d = new Date()){
-  // YYYY-MM-DD
-  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+function todayISO(){
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${yyyy}-${mm}-${dd}`;
 }
-function nowLocalTimeValue(d = new Date()){
-  // HH:MM (24h)
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+function nowHHMM(){
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2,"0");
+  const mm = String(d.getMinutes()).padStart(2,"0");
+  return `${hh}:${mm}`;
 }
 
-// Employee display name from profile
-function defaultEmployeeName(ctx){
-  const first = (ctx?.profile?.first_name || "").trim();
-  const last  = (ctx?.profile?.last_name || "").trim();
-
-  // You asked: autopopulate with first name
-  if (first) return first;
-
+function buildEmployeeName(ctx){
+  const p = ctx?.profile || {};
+  const first = String(p.first_name || "").trim();
+  const last  = String(p.last_name || "").trim();
   const full = `${first} ${last}`.trim();
   if (full) return full;
 
-  const email = (ctx?.user?.email || "").trim();
-  if (email.includes("@")) return email.split("@")[0];
-
+  const email = String(ctx?.user?.email || "").trim();
+  if (email && email.includes("@")) return email.split("@")[0];
   return "";
 }
 
 export function mountSafeForm(container, ctx){
-  // ctx: { profile: { org_id, role, first_name, last_name }, user }
   container.innerHTML = `
     <form id="safeForm">
       <div class="grid2">
@@ -223,18 +218,10 @@ export function mountSafeForm(container, ctx){
     return { bills, reg1, reg2, coins, total: bills + regs + coins };
   }
 
-  function setDateTimeNow(){
-    const d = new Date();
-    dateEl.value = nowLocalDateValue(d);
-    timeEl.value = nowLocalTimeValue(d);
-  }
-
-  function prefillEmployee(){
-    // only fill if empty (don’t overwrite if user already typed)
-    if (!empEl.value.trim()) {
-      empEl.value = defaultEmployeeName(ctx);
-    }
-  }
+  // Defaults
+  dateEl.value = todayISO();
+  timeEl.value = nowHHMM();
+  empEl.value = buildEmployeeName(ctx);
 
   // live calc
   container.querySelectorAll("input,textarea").forEach(el => {
@@ -244,8 +231,10 @@ export function mountSafeForm(container, ctx){
   // clear
   container.querySelector("#safe_clear").addEventListener("click", () => {
     form.reset();
+    dateEl.value = todayISO();
+    timeEl.value = nowHHMM();
+    empEl.value = buildEmployeeName(ctx);
 
-    // force all qty inputs to 0 (reset may set empty)
     [...DENOMS.bills, ...DENOMS.coins].forEach(x => {
       const el = container.querySelector(`#safe_${x.key}`);
       if (el) el.value = "0";
@@ -254,103 +243,92 @@ export function mountSafeForm(container, ctx){
     reg1El.value = "";
     reg2El.value = "";
     notesEl.value = "";
-
-    // re-apply defaults
-    setDateTimeNow();
-    prefillEmployee();
-
     calc();
     clearStatus();
   });
+
+  async function tryInsert(payload){
+    return await supabase.from("form_safe").insert(payload).select("id, created_at").single();
+  }
 
   // submit -> Supabase insert
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     clearStatus();
 
-    // IMPORTANT: DB columns are form_date + form_time
-    const form_date = (dateEl.value || "").trim();
-    const form_time = (timeEl.value || "").trim();
-    const employee_name = (empEl.value || "").trim();
-    const notes = (notesEl.value || "").trim();
-
     if (!ctx?.user?.id) return setStatus("err", "❌ Not logged in.");
-    if (!ctx?.profile?.org_id) return setStatus("err", "❌ Your profile has no org assigned. Admin must assign your org.");
-    if (!form_date) return setStatus("err", "❌ Date is required.");
+
+    const employee_name = (empEl.value || "").trim();
     if (!employee_name) return setStatus("err", "❌ Employee name is required.");
 
     const computed = calc();
 
-    // Build payload (match your schema)
-    const payload = {
-      org_id: ctx.profile.org_id,
+    // Always use the user's org_id (admin can see all via RLS; you can change later if you want admin to choose org)
+    const org_id = ctx?.profile?.org_id ?? null;
+    if (!org_id && (ctx?.profile?.role || "") !== "admin") {
+      return setStatus("err", "❌ Your profile has no org assigned. Admin must assign your org.");
+    }
+
+    // We will attempt BOTH schemas:
+    const date = (dateEl.value || "").trim();
+    const time = (timeEl.value || "").trim();
+    if (!date) return setStatus("err", "❌ Date is required.");
+
+    // qty fields
+    const qtyFields = {};
+    for (const b of DENOMS.bills) qtyFields[b.key] = int0(container.querySelector(`#safe_${b.key}`)?.value);
+    for (const c of DENOMS.coins) qtyFields[c.key] = int0(container.querySelector(`#safe_${c.key}`)?.value);
+
+    const base = {
+      org_id,
       created_by: ctx.user.id,
-
-      form_date,
-      form_time: form_time || null,
-
       employee_name,
       reg1_amount_cents: computed.reg1,
       reg2_amount_cents: computed.reg2,
-      notes: notes || null,
+      notes: (notesEl.value || "").trim() || null,
+      ...qtyFields,
     };
 
-    // qty fields
-    for (const b of DENOMS.bills){
-      payload[b.key] = int0(container.querySelector(`#safe_${b.key}`)?.value);
-    }
-    for (const c of DENOMS.coins){
-      payload[c.key] = int0(container.querySelector(`#safe_${c.key}`)?.value);
-    }
+    const payloadNew = { ...base, form_date: date, form_time: time || null }; // NEW columns
+    const payloadOld = { ...base, date: date, time: time || null };           // OLD columns
 
     try {
       submitBtn.disabled = true;
       setStatus("ok", "Saving…");
 
-      const { data, error } = await supabase
-        .from("form_safe")
-        .insert(payload)
-        .select("id, created_at")
-        .single();
+      // Try new schema first
+      let res = await tryInsert(payloadNew);
 
-      if (error) throw error;
+      // If schema cache says form_date doesn't exist, retry old
+      if (res.error && String(res.error.message || "").includes("schema cache") && String(res.error.message || "").includes("form_date")) {
+        res = await tryInsert(payloadOld);
+      }
 
-      setStatus("ok", `✅ Saved. Entry ID: ${data.id}`);
+      // If schema cache says date doesn't exist, retry new
+      if (res.error && String(res.error.message || "").includes("schema cache") && String(res.error.message || "").includes("date")) {
+        res = await tryInsert(payloadNew);
+      }
 
-      // set new defaults after save (your request)
-      setDateTimeNow();
-      prefillEmployee();
+      if (res.error) throw res.error;
 
-      // optionally clear money fields after save (comment out if you want to keep values)
-      // [...DENOMS.bills, ...DENOMS.coins].forEach(x => {
-      //   const el = container.querySelector(`#safe_${x.key}`);
-      //   if (el) el.value = "0";
-      // });
-      // reg1El.value = "";
-      // reg2El.value = "";
-      // notesEl.value = "";
-      // calc();
+      setStatus("ok", `✅ Saved. Entry ID: ${res.data.id}`);
+      window.dispatchEvent(new CustomEvent("forms:saved", { detail: { type:"safe", id: res.data.id } }));
 
-      window.dispatchEvent(new CustomEvent("forms:saved", { detail: { type:"safe", id:data.id } }));
+      // After save, bump time forward to now (common workflow)
+      timeEl.value = nowHHMM();
+
     } catch (err) {
       console.error(err);
-      setStatus("err", "❌ Save failed: " + (err?.message || "Check RLS policies."));
+      setStatus("err", "❌ Save failed: " + (err?.message || "Check RLS policies / schema cache."));
     } finally {
       submitBtn.disabled = false;
     }
   });
 
-  // ===== initial defaults =====
-  // default qty inputs to 0
+  // init qty to 0 and calc
   [...DENOMS.bills, ...DENOMS.coins].forEach(x => {
     const el = container.querySelector(`#safe_${x.key}`);
     if (el && (el.value === "" || el.value == null)) el.value = "0";
   });
-
-  // auto-fill date/time + employee
-  setDateTimeNow();
-  prefillEmployee();
-
-  // initial calc
   calc();
 }
