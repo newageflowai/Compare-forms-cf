@@ -46,3 +46,29 @@ th{color:rgba(243,246,255,.85);font-size:13px}
 .tab.active{border-color:rgba(255,179,122,.45);background:rgba(255,179,122,.06)}
 .panel{margin-top:12px}
 .small{font-size:12px;color:var(--muted)}
+.modalOverlay{
+  position:fixed; inset:0;
+  background:rgba(0,0,0,.55);
+  display:flex; align-items:center; justify-content:center;
+  padding:18px;
+  z-index:9999;
+}
+.modalOverlay.hide{display:none !important;}
+.modal{
+  width:min(980px, 98vw);
+  max-height:85vh;
+  overflow:auto;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:16px;
+  box-shadow:0 20px 60px rgba(0,0,0,.55);
+  padding:16px;
+}
+.modalHeader{
+  display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+  margin-bottom:10px;
+}
+.smallBtn{
+  padding:8px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.14);
+  background:rgba(255,255,255,.03);color:var(--text);cursor:pointer;font-weight:650
+}
