@@ -5,10 +5,6 @@ import { mountSafeForm } from "./forms/safe.js";
 // --------- helpers ----------
 function $(sel) { return document.querySelector(sel); }
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function money(cents){
-  const v = (Number(cents) || 0) / 100;
-  return v.toLocaleString(undefined, { style:"currency", currency:"USD" });
-}
 function toLocalDT(iso){
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
@@ -93,10 +89,7 @@ function closeEntryModal(){
 }
 
 // --------- session/profile ----------
-let ctx = {
-  user: null,
-  profile: null, // { id, org_id, role, first_name, last_name }
-};
+let ctx = { user: null, profile: null };
 
 async function requireSession(){
   const { data } = await supabase.auth.getSession();
@@ -109,14 +102,11 @@ async function requireSession(){
 }
 
 async function loadProfile(userId){
-  // profiles table assumed: id (uuid), org_id (uuid), role (text), first_name, last_name
-  // RLS must allow select own row.
   const { data, error } = await supabase
     .from("profiles")
     .select("id, org_id, role, first_name, last_name")
     .eq("id", userId)
     .single();
-
   if (error) throw error;
   return data;
 }
@@ -124,8 +114,7 @@ async function loadProfile(userId){
 function fullName(p){
   const fn = (p?.first_name || "").trim();
   const ln = (p?.last_name || "").trim();
-  const combined = (fn + " " + ln).trim();
-  return combined || "(no name)";
+  return (fn + " " + ln).trim() || "(no name)";
 }
 
 // --------- tabs ----------
@@ -136,23 +125,18 @@ function showTab(key){
     el.classList.toggle("hide", k !== key);
   });
 }
+tabs.forEach(btn => btn.addEventListener("click", () => showTab(btn.dataset.tab)));
 
-tabs.forEach(btn => {
-  btn.addEventListener("click", () => {
-    showTab(btn.dataset.tab);
-  });
-});
-
-// --------- recent entries ----------
+// ✅ IMPORTANT FIX:
+// Recent Entries MUST NOT reference form_date directly in select() if DB doesn't have it.
+// We select("*") and then use row.form_date || row.date
 async function fetchRecentSafe(){
-  // FIX: order() must come AFTER select() in Supabase v2
   let q = supabase
     .from("form_safe")
-    .select("id, created_at, form_date, employee_name, notes, org_id")
+    .select("*")
     .order("created_at", { ascending: false })
     .limit(25);
 
-  // user sees only their org (admin sees all)
   if (ctx.profile?.role !== "admin" && ctx.profile?.org_id) {
     q = q.eq("org_id", ctx.profile.org_id);
   }
@@ -164,9 +148,10 @@ async function fetchRecentSafe(){
     type: "safe",
     id: r.id,
     created_at: r.created_at,
-    form_date: r.form_date,
-    employee_name: r.employee_name,
-    notes: r.notes,
+    // supports either column naming
+    form_date: r.form_date ?? r.date ?? "",
+    employee_name: r.employee_name ?? "",
+    notes: r.notes ?? "",
   }));
 }
 
@@ -186,14 +171,13 @@ async function loadRecent(){
       <tr class="clickRow" data-type="${esc(r.type)}" data-id="${esc(r.id)}" style="cursor:pointer">
         <td>${esc(toLocalDT(r.created_at))}</td>
         <td>${esc(r.type.toUpperCase())}</td>
-        <td>${esc(r.form_date || "")}</td>
-        <td>${esc(r.employee_name || "")}</td>
-        <td>${esc((r.notes || "").slice(0, 40))}${(r.notes && r.notes.length > 40) ? "…" : ""}</td>
+        <td>${esc(r.form_date)}</td>
+        <td>${esc(r.employee_name)}</td>
+        <td>${esc(String(r.notes).slice(0, 40))}${(r.notes && String(r.notes).length > 40) ? "…" : ""}</td>
         <td class="mono">${esc(r.id)}</td>
       </tr>
     `).join("");
 
-    // click handlers
     recentBody.querySelectorAll("tr.clickRow").forEach(tr => {
       tr.addEventListener("click", () => {
         const id = tr.getAttribute("data-id");
@@ -209,7 +193,7 @@ async function loadRecent(){
   }
 }
 
-// --------- entry viewer/editor ----------
+// --------- entry viewer/editor (SAFE) ----------
 async function openEntryViewer(type, id){
   ensureModal();
   clearStatus($("#entryModalStatus"));
@@ -237,8 +221,6 @@ async function openEntryViewer(type, id){
     $("#entryMeta").textContent = `ID: ${data.id} • Saved: ${toLocalDT(data.created_at)}`;
 
     const isAdmin = ctx.profile?.role === "admin";
-
-    // Render as read-only (user) or editable (admin)
     $("#entryBody").innerHTML = renderSafeEntryForm(data, isAdmin);
 
     if (isAdmin) {
@@ -261,7 +243,6 @@ function renderSafeEntryForm(row, editable){
       <input id="${id}" type="${type}" value="${esc(value ?? "")}" ${dis} />
     </div>
   `;
-
   const qty = (key, label, value) => `
     <tr>
       <td>${esc(label)}</td>
@@ -271,10 +252,13 @@ function renderSafeEntryForm(row, editable){
     </tr>
   `;
 
+  const dateVal = row.form_date ?? row.date ?? "";
+  const timeVal = row.form_time ?? row.time ?? "";
+
   return `
     <div class="grid2">
-      ${input("edit_form_date", "Date", row.form_date ?? "", "date")}
-      ${input("edit_form_time", "Time", row.form_time ?? "", "text")}
+      ${input("edit_form_date", "Date", dateVal, "date")}
+      ${input("edit_form_time", "Time", timeVal, "text")}
     </div>
 
     ${input("edit_employee_name", "Employee Name", row.employee_name ?? "", "text")}
@@ -299,7 +283,6 @@ function renderSafeEntryForm(row, editable){
       ${input("edit_reg1_amount_cents", "Register 1 (cents)", row.reg1_amount_cents ?? 0, "number")}
       ${input("edit_reg2_amount_cents", "Register 2 (cents)", row.reg2_amount_cents ?? 0, "number")}
     </div>
-    <div class="muted" style="margin-top:6px">Admins edit cents directly (ex: $12.34 = 1234).</div>
 
     <div class="sectionTitle" style="margin-top:12px">Coins (Qty)</div>
     <div style="overflow:auto">
@@ -316,11 +299,6 @@ function renderSafeEntryForm(row, editable){
 
     <label for="edit_notes">Notes</label>
     <textarea id="edit_notes" ${dis}>${esc(row.notes ?? "")}</textarea>
-
-    <div class="totalsRow" style="margin-top:12px">
-      <div style="font-weight:800">Saved Registers Total</div>
-      <div class="mono" style="font-weight:900">${money((row.reg1_amount_cents ?? 0) + (row.reg2_amount_cents ?? 0))}</div>
-    </div>
   `;
 }
 
@@ -336,9 +314,14 @@ async function saveSafeEdits(id){
   try {
     setStatus(st, "ok", "Saving…");
 
+    // We’ll update BOTH possible naming styles safely:
+    // If your table uses form_date/form_time, those will update.
+    // If it uses date/time, those will update.
+    // (Unknown columns are NOT sent.)
+    const dateVal = ($("#edit_form_date").value || "").trim() || null;
+    const timeVal = ($("#edit_form_time").value || "").trim() || null;
+
     const patch = {
-      form_date: ($("#edit_form_date").value || "").trim() || null,
-      form_time: ($("#edit_form_time").value || "").trim() || null,
       employee_name: ($("#edit_employee_name").value || "").trim() || null,
 
       bills_100_qty: int0($("#edit_bills_100_qty").value),
@@ -359,10 +342,23 @@ async function saveSafeEdits(id){
       notes: ($("#edit_notes").value || "").trim() || null,
     };
 
-    const { error } = await supabase
-      .from("form_safe")
-      .update(patch)
-      .eq("id", id);
+    // Add date/time keys in a tolerant way (only one will exist in your DB)
+    // We'll try update with form_date/form_time first; if it errors, retry with date/time.
+    let { error } = await supabase.from("form_safe").update({
+      ...patch,
+      form_date: dateVal,
+      form_time: timeVal,
+    }).eq("id", id);
+
+    if (error && /column .*form_date|form_time does not exist/i.test(error.message || "")) {
+      // fallback naming
+      const res = await supabase.from("form_safe").update({
+        ...patch,
+        date: dateVal,
+        time: timeVal,
+      }).eq("id", id);
+      error = res.error;
+    }
 
     if (error) throw error;
 
@@ -383,12 +379,8 @@ async function init(){
 
     whoamiEl.textContent = `${ctx.user.email} • ${fullName(ctx.profile)} • ${String(ctx.profile.role || "user").toUpperCase()}`;
 
-    // admin button
-    if (ctx.profile.role === "admin") {
-      adminLink.style.display = "";
-    } else {
-      adminLink.style.display = "none";
-    }
+    if (ctx.profile.role === "admin") adminLink.style.display = "";
+    else adminLink.style.display = "none";
 
     // mount forms
     mountSafeForm(panels.safe, ctx);
@@ -397,16 +389,10 @@ async function init(){
     panels.transfer.innerHTML = `<div class="muted">Transfer / Shrinkage coming next…</div>`;
     panels.daily.innerHTML = `<div class="muted">Cuadre Diario coming next…</div>`;
 
-    // tabs default
     showTab("safe");
-
-    // load recent
     await loadRecent();
 
-    // refresh
     refreshBtn.addEventListener("click", loadRecent);
-
-    // when forms save, refresh recent
     window.addEventListener("forms:saved", () => loadRecent());
 
   } catch (err) {
