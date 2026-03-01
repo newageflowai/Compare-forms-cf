@@ -2,519 +2,422 @@
 import { supabase } from "./supabase.js";
 import { mountSafeForm } from "./forms/safe.js";
 
-// ---------- helpers ----------
+// --------- helpers ----------
+function $(sel) { return document.querySelector(sel); }
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function fmtDateTime(ts){ try { return new Date(ts).toLocaleString(); } catch { return String(ts || ""); } }
 function money(cents){
   const v = (Number(cents) || 0) / 100;
   return v.toLocaleString(undefined, { style:"currency", currency:"USD" });
 }
-function n0(v){ const x = Number(v); return Number.isFinite(x) ? x : 0; }
-function int0(v){ return Math.max(0, Math.trunc(n0(v))); }
-function toCents(v){
-  const x = n0(String(v).replace(/[$,]/g,""));
-  return Number.isFinite(x) ? Math.round(x * 100) : 0;
+function toLocalDT(iso){
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+function setStatus(el, type, msg){
+  if (!el) return;
+  el.className = "status " + type; // ok | err
+  el.textContent = msg;
+}
+function clearStatus(el){
+  if (!el) return;
+  el.className = "status";
+  el.textContent = "";
 }
 
-const DENOMS = {
-  bills: [
-    { key: "bills_100_qty", label: "$100", cents: 10000 },
-    { key: "bills_50_qty",  label: "$50",  cents: 5000 },
-    { key: "bills_20_qty",  label: "$20",  cents: 2000 },
-    { key: "bills_10_qty",  label: "$10",  cents: 1000 },
-    { key: "bills_5_qty",   label: "$5",   cents: 500 },
-    { key: "bills_1_qty",   label: "$1",   cents: 100 },
-  ],
-  coins: [
-    { key: "quarters_qty", label: "Quarters", cents: 25 },
-    { key: "dimes_qty",    label: "Dimes",    cents: 10 },
-    { key: "nickels_qty",  label: "Nickels",  cents: 5 },
-    { key: "pennies_qty",  label: "Pennies",  cents: 1 },
-  ]
-};
-
-// ---------- DOM ----------
-const whoamiEl = document.getElementById("whoami");
-const logoutBtn = document.getElementById("logoutBtn");
-const adminLink = document.getElementById("adminLink");
-const formStatus = document.getElementById("formStatus");
-const refreshBtn = document.getElementById("refreshBtn");
-const recentBody = document.getElementById("recentBody");
+// --------- DOM ----------
+const whoamiEl = $("#whoami");
+const logoutBtn = $("#logoutBtn");
+const adminLink = $("#adminLink");
+const recentBody = $("#recentBody");
+const refreshBtn = $("#refreshBtn");
+const formStatus = $("#formStatus");
 
 const panels = {
-  safe: document.getElementById("panel-safe"),
-  loteria: document.getElementById("panel-loteria"),
-  cashpay: document.getElementById("panel-cashpay"),
-  transfer: document.getElementById("panel-transfer"),
-  daily: document.getElementById("panel-daily"),
+  safe: $("#panel-safe"),
+  loteria: $("#panel-loteria"),
+  cashpay: $("#panel-cashpay"),
+  transfer: $("#panel-transfer"),
+  daily: $("#panel-daily"),
 };
 
-const tabButtons = Array.from(document.querySelectorAll(".tab[data-tab]"));
+const tabs = Array.from(document.querySelectorAll(".tab"));
 
-// Modal elements
-const entryOverlay = document.getElementById("entryOverlay");
-const entryTitle = document.getElementById("entryTitle");
-const entryMeta = document.getElementById("entryMeta");
-const entryBody = document.getElementById("entryBody");
-const entryStatus = document.getElementById("entryStatus");
-const entryCloseBtn = document.getElementById("entryCloseBtn");
-const entryEditBtn = document.getElementById("entryEditBtn");
-const entrySaveBtn = document.getElementById("entrySaveBtn");
-const entryModeBadge = document.getElementById("entryModeBadge");
+// --------- modal for viewing/editing entries ----------
+function ensureModal(){
+  if ($("#entryOverlay")) return;
 
-function setStatus(type, msg){
-  if (!formStatus) return;
-  formStatus.className = "status " + type;
-  formStatus.textContent = msg;
-}
-function clearStatus(){
-  if (!formStatus) return;
-  formStatus.className = "status";
-  formStatus.textContent = "";
-}
+  const div = document.createElement("div");
+  div.id = "entryOverlay";
+  div.className = "modalOverlay hide";
+  div.innerHTML = `
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="entryTitle">
+      <div class="modalHeader">
+        <div>
+          <h2 id="entryTitle" style="margin:0">View Entry</h2>
+          <div class="muted" id="entryMeta"></div>
+        </div>
+        <button class="smallBtn" id="entryCloseBtn" type="button">Close</button>
+      </div>
 
-function setModalStatus(type, msg){
-  entryStatus.className = "status " + type;
-  entryStatus.textContent = msg;
-}
-function clearModalStatus(){
-  entryStatus.className = "status";
-  entryStatus.textContent = "";
-}
+      <div id="entryModalStatus" class="status" role="status" aria-live="polite"></div>
 
-function show(el){ el.classList.remove("hide"); el.setAttribute("aria-hidden","false"); }
-function hide(el){ el.classList.add("hide"); el.setAttribute("aria-hidden","true"); }
+      <div id="entryBody" class="card" style="margin-top:10px"></div>
 
-// ---------- tabs ----------
-function setActiveTab(key){
-  tabButtons.forEach(btn => btn.classList.toggle("active", btn.getAttribute("data-tab") === key));
-  Object.entries(panels).forEach(([k, el]) => {
-    if (!el) return;
-    el.classList.toggle("hide", k !== key);
+      <div class="actions" style="margin-top:12px">
+        <button class="btn" id="entrySaveBtn" type="button" style="display:none">Save Changes</button>
+        <button class="btn secondary" id="entryCancelBtn" type="button">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(div);
+
+  $("#entryCloseBtn").addEventListener("click", closeEntryModal);
+  $("#entryCancelBtn").addEventListener("click", closeEntryModal);
+  div.addEventListener("click", (e) => { if (e.target === div) closeEntryModal(); });
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !div.classList.contains("hide")) closeEntryModal();
   });
 }
-tabButtons.forEach(btn => btn.addEventListener("click", () => setActiveTab(btn.getAttribute("data-tab"))));
 
-// ---------- auth/profile ----------
+function openEntryModal(){
+  ensureModal();
+  $("#entryOverlay").classList.remove("hide");
+  $("#entryOverlay").setAttribute("aria-hidden", "false");
+}
+function closeEntryModal(){
+  const o = $("#entryOverlay");
+  if (!o) return;
+  o.classList.add("hide");
+  o.setAttribute("aria-hidden", "true");
+  $("#entryBody").innerHTML = "";
+  clearStatus($("#entryModalStatus"));
+}
+
+// --------- session/profile ----------
+let ctx = {
+  user: null,
+  profile: null, // { id, org_id, role, first_name, last_name }
+};
+
 async function requireSession(){
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.user) {
+  const { data } = await supabase.auth.getSession();
+  const user = data?.session?.user;
+  if (!user) {
     window.location.href = "/index.html";
     return null;
   }
-  return session;
+  return user;
 }
 
 async function loadProfile(userId){
+  // profiles table assumed: id (uuid), org_id (uuid), role (text), first_name, last_name
+  // RLS must allow select own row.
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, email, role, org_id, first_name, last_name")
+    .select("id, org_id, role, first_name, last_name")
     .eq("id", userId)
     .single();
+
   if (error) throw error;
   return data;
 }
 
 function fullName(p){
-  const first = String(p?.first_name || "").trim();
-  const last  = String(p?.last_name || "").trim();
-  const full = `${first} ${last}`.trim();
-  return full || "";
+  const fn = (p?.first_name || "").trim();
+  const ln = (p?.last_name || "").trim();
+  const combined = (fn + " " + ln).trim();
+  return combined || "(no name)";
 }
 
-// ---------- recent entries ----------
-async function fetchSafeRecent({ profile }){
-  // Try NEW columns first: form_date/form_time; fallback to date/time
-  const base = supabase
+// --------- tabs ----------
+function showTab(key){
+  tabs.forEach(t => t.classList.toggle("active", t.dataset.tab === key));
+  Object.entries(panels).forEach(([k, el]) => {
+    if (!el) return;
+    el.classList.toggle("hide", k !== key);
+  });
+}
+
+tabs.forEach(btn => {
+  btn.addEventListener("click", () => {
+    showTab(btn.dataset.tab);
+  });
+});
+
+// --------- recent entries ----------
+async function fetchRecentSafe(){
+  // FIX: order() must come AFTER select() in Supabase v2
+  let q = supabase
     .from("form_safe")
-    .order("created_at", { ascending:false })
-    .limit(20);
+    .select("id, created_at, form_date, employee_name, notes, org_id")
+    .order("created_at", { ascending: false })
+    .limit(25);
 
-  const qBase = (profile?.role === "admin" || !profile?.org_id)
-    ? base
-    : base.eq("org_id", profile.org_id);
-
-  let res = await qBase.select("id, created_at, employee_name, notes, org_id, form_date, form_time");
-
-  if (res.error && String(res.error.message || "").includes("form_date")) {
-    res = await qBase.select("id, created_at, employee_name, notes, org_id, date, time");
+  // user sees only their org (admin sees all)
+  if (ctx.profile?.role !== "admin" && ctx.profile?.org_id) {
+    q = q.eq("org_id", ctx.profile.org_id);
   }
 
-  if (res.error) throw res.error;
+  const { data, error } = await q;
+  if (error) throw error;
 
-  return (res.data || []).map(r => ({
+  return (data || []).map(r => ({
+    type: "safe",
     id: r.id,
     created_at: r.created_at,
-    type: "safe",
-    typeLabel: "Cuadre del Safe",
-    form_date: r.form_date ?? r.date ?? null,
-    employee_name: r.employee_name ?? "",
-    notes: r.notes ?? "",
+    form_date: r.form_date,
+    employee_name: r.employee_name,
+    notes: r.notes,
   }));
 }
 
-async function loadRecentEntries(ctx){
+async function loadRecent(){
+  clearStatus(formStatus);
   recentBody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
-  try {
-    const safeRows = await fetchSafeRecent({ profile: ctx.profile });
 
-    if (!safeRows.length) {
+  try {
+    const rows = await fetchRecentSafe();
+
+    if (!rows.length) {
       recentBody.innerHTML = `<tr><td colspan="6" class="muted">No entries yet.</td></tr>`;
       return;
     }
 
-    recentBody.innerHTML = safeRows.map(r => `
-      <tr class="clickRow" data-type="${esc(r.type)}" data-id="${esc(r.id)}">
-        <td>${esc(fmtDateTime(r.created_at))}</td>
-        <td>${esc(r.typeLabel)}</td>
-        <td>${esc(String(r.form_date || ""))}</td>
-        <td>${esc(r.employee_name)}</td>
-        <td>${esc(r.notes)}</td>
+    recentBody.innerHTML = rows.map(r => `
+      <tr class="clickRow" data-type="${esc(r.type)}" data-id="${esc(r.id)}" style="cursor:pointer">
+        <td>${esc(toLocalDT(r.created_at))}</td>
+        <td>${esc(r.type.toUpperCase())}</td>
+        <td>${esc(r.form_date || "")}</td>
+        <td>${esc(r.employee_name || "")}</td>
+        <td>${esc((r.notes || "").slice(0, 40))}${(r.notes && r.notes.length > 40) ? "…" : ""}</td>
         <td class="mono">${esc(r.id)}</td>
       </tr>
     `).join("");
 
-    // click to open modal
-    recentBody.querySelectorAll("tr[data-id][data-type]").forEach(tr => {
-      tr.addEventListener("click", async () => {
+    // click handlers
+    recentBody.querySelectorAll("tr.clickRow").forEach(tr => {
+      tr.addEventListener("click", () => {
         const id = tr.getAttribute("data-id");
         const type = tr.getAttribute("data-type");
-        await openEntryModal({ id, type, ctx });
+        openEntryViewer(type, id);
       });
     });
 
   } catch (err) {
     console.error(err);
-    recentBody.innerHTML = `<tr><td colspan="6" class="muted">Error: ${esc(err?.message || "Could not load recent entries")}</td></tr>`;
+    recentBody.innerHTML = `<tr><td colspan="6" class="muted">Error loading entries.</td></tr>`;
+    setStatus(formStatus, "err", "❌ " + (err?.message || "Failed to load recent entries."));
   }
 }
 
-// ---------- modal: view/edit SAFE ----------
-let modalState = {
-  type: null,
-  id: null,
-  isAdmin: false,
-  editMode: false,
-  // schema detection
-  dateCol: "form_date",
-  timeCol: "form_time",
-  // loaded row
-  row: null,
-};
+// --------- entry viewer/editor ----------
+async function openEntryViewer(type, id){
+  ensureModal();
+  clearStatus($("#entryModalStatus"));
+  $("#entryBody").innerHTML = `<div class="muted">Loading…</div>`;
+  $("#entrySaveBtn").style.display = "none";
+  $("#entryMeta").textContent = "";
+  $("#entryTitle").textContent = "View Entry";
+  openEntryModal();
 
-function setEditMode(on){
-  modalState.editMode = !!on;
+  try {
+    if (type !== "safe") {
+      $("#entryBody").innerHTML = `<div class="muted">Viewer not implemented for: ${esc(type)}</div>`;
+      return;
+    }
 
-  if (modalState.isAdmin) {
-    entryEditBtn.style.display = on ? "none" : "inline-flex";
-    entrySaveBtn.style.display = on ? "inline-flex" : "none";
-    entryModeBadge.textContent = on ? "EDIT MODE" : "VIEW ONLY";
-  } else {
-    entryEditBtn.style.display = "none";
-    entrySaveBtn.style.display = "none";
-    entryModeBadge.textContent = "VIEW ONLY";
+    const { data, error } = await supabase
+      .from("form_safe")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (error) throw error;
+
+    $("#entryTitle").textContent = "Cuadre del Safe";
+    $("#entryMeta").textContent = `ID: ${data.id} • Saved: ${toLocalDT(data.created_at)}`;
+
+    const isAdmin = ctx.profile?.role === "admin";
+
+    // Render as read-only (user) or editable (admin)
+    $("#entryBody").innerHTML = renderSafeEntryForm(data, isAdmin);
+
+    if (isAdmin) {
+      $("#entrySaveBtn").style.display = "";
+      $("#entrySaveBtn").onclick = () => saveSafeEdits(data.id);
+    }
+
+  } catch (err) {
+    console.error(err);
+    $("#entryBody").innerHTML = `<div class="muted">Failed to load entry.</div>`;
+    setStatus($("#entryModalStatus"), "err", "❌ " + (err?.message || "Could not open entry."));
   }
-
-  // toggle disabled state for inputs in body
-  entryBody.querySelectorAll("[data-editable='1']").forEach(el => {
-    el.disabled = !on;
-    el.readOnly = !on;
-  });
 }
 
-function calcSafeFromRow(r){
-  let bills = 0;
-  for (const b of DENOMS.bills) bills += (int0(r[b.key]) * b.cents);
-  const regs = (int0(r.reg1_amount_cents) + int0(r.reg2_amount_cents));
-  let coins = 0;
-  for (const c of DENOMS.coins) coins += (int0(r[c.key]) * c.cents);
-  return { bills, regs, coins, total: bills + regs + coins };
-}
+function renderSafeEntryForm(row, editable){
+  const dis = editable ? "" : "disabled";
+  const input = (id, label, value, type="text") => `
+    <div>
+      <label for="${id}">${esc(label)}</label>
+      <input id="${id}" type="${type}" value="${esc(value ?? "")}" ${dis} />
+    </div>
+  `;
 
-function renderSafeModalBody(r){
-  const dateVal = r.form_date ?? r.date ?? "";
-  const timeVal = r.form_time ?? r.time ?? "";
-
-  const computed = calcSafeFromRow(r);
-
-  function qtyRow(label, qty, amount){
-    return `
-      <tr>
-        <td>${esc(label)}</td>
-        <td>${esc(String(qty ?? 0))}</td>
-        <td class="mono">${esc(money(amount))}</td>
-      </tr>
-    `;
-  }
-
-  const billsRows = DENOMS.bills.map(b => {
-    const qty = int0(r[b.key]);
-    return qtyRow(b.label, qty, qty * b.cents);
-  }).join("");
-
-  const coinsRows = DENOMS.coins.map(c => {
-    const qty = int0(r[c.key]);
-    return qtyRow(c.label, qty, qty * c.cents);
-  }).join("");
+  const qty = (key, label, value) => `
+    <tr>
+      <td>${esc(label)}</td>
+      <td style="max-width:160px">
+        <input id="edit_${esc(key)}" type="number" min="0" step="1" value="${esc(value ?? 0)}" ${dis}/>
+      </td>
+    </tr>
+  `;
 
   return `
-    <div class="modalGrid">
-      <div>
-        <label>Date</label>
-        <input id="m_safe_date" data-editable="1" type="date" value="${esc(String(dateVal))}" disabled />
-      </div>
-      <div>
-        <label>Time</label>
-        <input id="m_safe_time" data-editable="1" type="time" value="${esc(String(timeVal || ""))}" disabled />
-      </div>
+    <div class="grid2">
+      ${input("edit_form_date", "Date", row.form_date ?? "", "date")}
+      ${input("edit_form_time", "Time", row.form_time ?? "", "text")}
     </div>
 
-    <div style="margin-top:10px">
-      <label>Employee Name</label>
-      <input id="m_safe_employee" data-editable="1" type="text" value="${esc(r.employee_name || "")}" disabled />
-    </div>
+    ${input("edit_employee_name", "Employee Name", row.employee_name ?? "", "text")}
 
-    <div class="sectionTitle" style="margin-top:14px">Bills</div>
+    <div class="sectionTitle" style="margin-top:12px">Bills (Qty)</div>
     <div style="overflow:auto">
       <table>
-        <thead><tr><th>Denomination</th><th>Qty</th><th>Amount</th></tr></thead>
-        <tbody>${billsRows}</tbody>
-        <tfoot>
-          <tr>
-            <th colspan="2" style="text-align:right">Bills Subtotal</th>
-            <th class="mono">${money(computed.bills)}</th>
-          </tr>
-        </tfoot>
+        <thead><tr><th>Denomination</th><th>Qty</th></tr></thead>
+        <tbody>
+          ${qty("bills_100_qty", "$100", row.bills_100_qty)}
+          ${qty("bills_50_qty", "$50", row.bills_50_qty)}
+          ${qty("bills_20_qty", "$20", row.bills_20_qty)}
+          ${qty("bills_10_qty", "$10", row.bills_10_qty)}
+          ${qty("bills_5_qty", "$5", row.bills_5_qty)}
+          ${qty("bills_1_qty", "$1", row.bills_1_qty)}
+        </tbody>
       </table>
     </div>
 
-    <div class="sectionTitle" style="margin-top:14px">Registers</div>
-    <div class="modalGrid">
-      <div>
-        <label>Register 1 Amount</label>
-        <input id="m_safe_reg1" data-editable="1" type="text" value="${esc(money(int0(r.reg1_amount_cents)).replace("$",""))}" disabled />
-      </div>
-      <div>
-        <label>Register 2 Amount</label>
-        <input id="m_safe_reg2" data-editable="1" type="text" value="${esc(money(int0(r.reg2_amount_cents)).replace("$",""))}" disabled />
-      </div>
+    <div class="sectionTitle" style="margin-top:12px">Registers</div>
+    <div class="grid2">
+      ${input("edit_reg1_amount_cents", "Register 1 (cents)", row.reg1_amount_cents ?? 0, "number")}
+      ${input("edit_reg2_amount_cents", "Register 2 (cents)", row.reg2_amount_cents ?? 0, "number")}
     </div>
-    <div class="totalsRow" style="margin-top:8px">
-      <div class="muted">Registers Subtotal</div>
-      <div class="mono">${money(computed.regs)}</div>
-    </div>
+    <div class="muted" style="margin-top:6px">Admins edit cents directly (ex: $12.34 = 1234).</div>
 
-    <div class="sectionTitle" style="margin-top:14px">Coins</div>
+    <div class="sectionTitle" style="margin-top:12px">Coins (Qty)</div>
     <div style="overflow:auto">
       <table>
-        <thead><tr><th>Coin</th><th>Qty</th><th>Amount</th></tr></thead>
-        <tbody>${coinsRows}</tbody>
-        <tfoot>
-          <tr>
-            <th colspan="2" style="text-align:right">Coins Subtotal</th>
-            <th class="mono">${money(computed.coins)}</th>
-          </tr>
-        </tfoot>
+        <thead><tr><th>Coin</th><th>Qty</th></tr></thead>
+        <tbody>
+          ${qty("quarters_qty", "Quarters", row.quarters_qty)}
+          ${qty("dimes_qty", "Dimes", row.dimes_qty)}
+          ${qty("nickels_qty", "Nickels", row.nickels_qty)}
+          ${qty("pennies_qty", "Pennies", row.pennies_qty)}
+        </tbody>
       </table>
     </div>
 
-    <div style="margin-top:10px">
-      <label>Notes</label>
-      <textarea id="m_safe_notes" data-editable="1" disabled>${esc(r.notes || "")}</textarea>
-    </div>
+    <label for="edit_notes">Notes</label>
+    <textarea id="edit_notes" ${dis}>${esc(row.notes ?? "")}</textarea>
 
     <div class="totalsRow" style="margin-top:12px">
-      <div style="font-weight:800">TOTAL</div>
-      <div class="mono" style="font-weight:900">${money(computed.total)}</div>
+      <div style="font-weight:800">Saved Registers Total</div>
+      <div class="mono" style="font-weight:900">${money((row.reg1_amount_cents ?? 0) + (row.reg2_amount_cents ?? 0))}</div>
     </div>
   `;
 }
 
-async function detectSafeSchema(){
-  // We detect if form_date exists by attempting a select that includes it
-  const probe = await supabase.from("form_safe").select("id, form_date").limit(1);
-  if (!probe.error) {
-    return { dateCol: "form_date", timeCol: "form_time" };
-  }
-  // fallback to old names
-  return { dateCol: "date", timeCol: "time" };
+function int0(v){
+  const x = Number(v);
+  return Number.isFinite(x) ? Math.max(0, Math.trunc(x)) : 0;
 }
 
-async function loadSafeEntryById(id){
-  // first try new columns; fallback automatically
-  let res = await supabase
-    .from("form_safe")
-    .select("*")
-    .eq("id", id)
-    .single();
-
-  if (res.error) throw res.error;
-  return res.data;
-}
-
-async function openEntryModal({ id, type, ctx }){
-  clearModalStatus();
-  modalState = {
-    type,
-    id,
-    isAdmin: ctx?.profile?.role === "admin",
-    editMode: false,
-    dateCol: "form_date",
-    timeCol: "form_time",
-    row: null,
-  };
-
-  // header
-  entryTitle.textContent = type === "safe" ? "Cuadre del Safe" : "Entry";
-  entryMeta.textContent = `Loading…`;
-  entryBody.innerHTML = `<div class="muted">Loading…</div>`;
-
-  // buttons
-  entryEditBtn.style.display = "none";
-  entrySaveBtn.style.display = "none";
-  entryModeBadge.textContent = "VIEW ONLY";
-
-  show(entryOverlay);
+async function saveSafeEdits(id){
+  const st = $("#entryModalStatus");
+  clearStatus(st);
 
   try {
-    const schema = await detectSafeSchema();
-    modalState.dateCol = schema.dateCol;
-    modalState.timeCol = schema.timeCol;
+    setStatus(st, "ok", "Saving…");
 
-    const row = await loadSafeEntryById(id);
-    modalState.row = row;
+    const patch = {
+      form_date: ($("#edit_form_date").value || "").trim() || null,
+      form_time: ($("#edit_form_time").value || "").trim() || null,
+      employee_name: ($("#edit_employee_name").value || "").trim() || null,
 
-    entryMeta.textContent =
-      `Created: ${fmtDateTime(row.created_at)} • ID: ${row.id}`;
+      bills_100_qty: int0($("#edit_bills_100_qty").value),
+      bills_50_qty:  int0($("#edit_bills_50_qty").value),
+      bills_20_qty:  int0($("#edit_bills_20_qty").value),
+      bills_10_qty:  int0($("#edit_bills_10_qty").value),
+      bills_5_qty:   int0($("#edit_bills_5_qty").value),
+      bills_1_qty:   int0($("#edit_bills_1_qty").value),
 
-    if (type === "safe") {
-      entryBody.innerHTML = renderSafeModalBody(row);
-    } else {
-      entryBody.innerHTML = `<div class="muted">Unsupported entry type.</div>`;
-    }
+      reg1_amount_cents: int0($("#edit_reg1_amount_cents").value),
+      reg2_amount_cents: int0($("#edit_reg2_amount_cents").value),
 
-    // admin can edit
-    if (modalState.isAdmin) {
-      entryEditBtn.style.display = "inline-flex";
-      entryModeBadge.textContent = "VIEW ONLY";
-    }
+      quarters_qty: int0($("#edit_quarters_qty").value),
+      dimes_qty:    int0($("#edit_dimes_qty").value),
+      nickels_qty:  int0($("#edit_nickels_qty").value),
+      pennies_qty:  int0($("#edit_pennies_qty").value),
 
-    setEditMode(false);
-
-  } catch (err) {
-    console.error(err);
-    setModalStatus("err", "❌ Could not load entry: " + (err?.message || "Unknown error"));
-  }
-}
-
-async function saveSafeEdits(ctx){
-  clearModalStatus();
-  if (!modalState.isAdmin) return setModalStatus("err", "❌ Admin only.");
-  if (!modalState.row?.id) return setModalStatus("err", "❌ No entry loaded.");
-
-  // collect editable fields
-  const dateEl = document.getElementById("m_safe_date");
-  const timeEl = document.getElementById("m_safe_time");
-  const empEl  = document.getElementById("m_safe_employee");
-  const reg1El = document.getElementById("m_safe_reg1");
-  const reg2El = document.getElementById("m_safe_reg2");
-  const notesEl = document.getElementById("m_safe_notes");
-
-  const form_date = (dateEl?.value || "").trim();
-  const form_time = (timeEl?.value || "").trim();
-  const employee_name = (empEl?.value || "").trim();
-  const reg1_amount_cents = toCents(reg1El?.value || "0");
-  const reg2_amount_cents = toCents(reg2El?.value || "0");
-  const notes = (notesEl?.value || "").trim();
-
-  if (!form_date) return setModalStatus("err", "❌ Date is required.");
-  if (!employee_name) return setModalStatus("err", "❌ Employee name is required.");
-
-  // write to whichever columns exist
-  const patch = {
-    employee_name,
-    reg1_amount_cents,
-    reg2_amount_cents,
-    notes: notes || null,
-  };
-  patch[modalState.dateCol] = form_date;
-  patch[modalState.timeCol] = form_time || null;
-
-  try {
-    entrySaveBtn.disabled = true;
-    setModalStatus("ok", "Saving…");
+      notes: ($("#edit_notes").value || "").trim() || null,
+    };
 
     const { error } = await supabase
       .from("form_safe")
       .update(patch)
-      .eq("id", modalState.row.id);
+      .eq("id", id);
 
     if (error) throw error;
 
-    setModalStatus("ok", "✅ Saved.");
-    setEditMode(false);
-
-    // refresh recent list so changes show
-    window.dispatchEvent(new CustomEvent("forms:saved", { detail: { type:"safe", id: modalState.row.id } }));
+    setStatus(st, "ok", "✅ Saved changes.");
+    await loadRecent();
 
   } catch (err) {
     console.error(err);
-    setModalStatus("err", "❌ Save failed: " + (err?.message || "Check RLS."));
-  } finally {
-    entrySaveBtn.disabled = false;
+    setStatus(st, "err", "❌ Save failed: " + (err?.message || "Check RLS."));
   }
 }
 
-// modal close behavior
-entryCloseBtn?.addEventListener("click", () => hide(entryOverlay));
-entryOverlay?.addEventListener("click", (e) => { if (e.target === entryOverlay) hide(entryOverlay); });
-window.addEventListener("keydown", (e) => { if (e.key === "Escape" && !entryOverlay.classList.contains("hide")) hide(entryOverlay); });
-
-entryEditBtn?.addEventListener("click", () => setEditMode(true));
-entrySaveBtn?.addEventListener("click", async () => {
-  // ctx is stored in closure via boot() below (we call saveSafeEdits with it)
-});
-
-// ---------- boot ----------
-(async function boot(){
+// --------- init ----------
+async function init(){
   try {
-    const session = await requireSession();
-    if (!session) return;
+    ctx.user = await requireSession();
+    ctx.profile = await loadProfile(ctx.user.id);
 
-    const profile = await loadProfile(session.user.id);
+    whoamiEl.textContent = `${ctx.user.email} • ${fullName(ctx.profile)} • ${String(ctx.profile.role || "user").toUpperCase()}`;
 
-    const name = fullName(profile);
-    whoamiEl.textContent = `${session.user.email}${name ? " • " + name : ""} • ${String(profile.role || "user").toUpperCase()}`;
-
-    if (profile.role === "admin") adminLink.style.display = "inline-flex";
-    else adminLink.style.display = "none";
-
-    const ctx = { user: session.user, profile };
-
-    // wire save btn with ctx
-    entrySaveBtn?.addEventListener("click", () => saveSafeEdits(ctx));
+    // admin button
+    if (ctx.profile.role === "admin") {
+      adminLink.style.display = "";
+    } else {
+      adminLink.style.display = "none";
+    }
 
     // mount forms
-    if (panels.safe) mountSafeForm(panels.safe, ctx);
-    if (panels.loteria) panels.loteria.innerHTML = `<div class="muted">Cuadre de Lotería coming next…</div>`;
-    if (panels.cashpay) panels.cashpay.innerHTML = `<div class="muted">Cash Payment coming next…</div>`;
-    if (panels.transfer) panels.transfer.innerHTML = `<div class="muted">Transfer / Shrinkage coming next…</div>`;
-    if (panels.daily) panels.daily.innerHTML = `<div class="muted">Cuadre Diario coming next…</div>`;
+    mountSafeForm(panels.safe, ctx);
+    panels.loteria.innerHTML = `<div class="muted">Cuadre de Lotería coming next…</div>`;
+    panels.cashpay.innerHTML = `<div class="muted">Cash Payment coming next…</div>`;
+    panels.transfer.innerHTML = `<div class="muted">Transfer / Shrinkage coming next…</div>`;
+    panels.daily.innerHTML = `<div class="muted">Cuadre Diario coming next…</div>`;
 
-    setActiveTab("safe");
+    // tabs default
+    showTab("safe");
 
-    await loadRecentEntries(ctx);
+    // load recent
+    await loadRecent();
 
-    refreshBtn?.addEventListener("click", () => loadRecentEntries(ctx));
-    window.addEventListener("forms:saved", () => loadRecentEntries(ctx));
+    // refresh
+    refreshBtn.addEventListener("click", loadRecent);
 
-    logoutBtn?.addEventListener("click", async () => {
-      await supabase.auth.signOut();
-      window.location.href = "/index.html";
-    });
+    // when forms save, refresh recent
+    window.addEventListener("forms:saved", () => loadRecent());
 
   } catch (err) {
     console.error(err);
-    setStatus("err", "❌ " + (err?.message || "Dashboard failed to load"));
+    setStatus(formStatus, "err", "❌ " + (err?.message || "Dashboard failed to load."));
   }
-})();
+}
+
+logoutBtn.addEventListener("click", async () => {
+  await supabase.auth.signOut();
+  window.location.href = "/index.html";
+});
+
+init();
