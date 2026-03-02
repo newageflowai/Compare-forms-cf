@@ -12,6 +12,7 @@
       <div>
         <h1>Dashboard</h1>
         <div class="muted" id="whoami">Loading…</div>
+        <div id="pageError" class="status err" style="display:none;margin-top:10px;white-space:pre-wrap"></div>
       </div>
 
       <div class="actions">
@@ -35,8 +36,6 @@
       <div id="panel-cashpay" class="panel hide"></div>
       <div id="panel-transfer" class="panel hide"></div>
       <div id="panel-daily" class="panel hide"></div>
-
-      <div id="formStatus" class="status" role="status" aria-live="polite"></div>
     </div>
 
     <div class="card">
@@ -86,6 +85,24 @@
       </div>
     </div>
   </div>
+
+  <!-- Global on-page error catcher -->
+  <script>
+    (function(){
+      const errBox = document.getElementById("pageError");
+      function show(msg){
+        if (!errBox) return;
+        errBox.style.display = "block";
+        errBox.textContent = msg;
+      }
+      window.addEventListener("error", (e) => {
+        show("JS Error: " + (e?.message || e));
+      });
+      window.addEventListener("unhandledrejection", (e) => {
+        show("Unhandled Promise Rejection: " + (e?.reason?.message || e?.reason || e));
+      });
+    })();
+  </script>
 
   <script type="module" src="/assets/dashboard.js"></script>
 </body>
