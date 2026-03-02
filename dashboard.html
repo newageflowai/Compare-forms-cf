@@ -5,54 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Compare Forms | Dashboard</title>
   <link rel="stylesheet" href="/assets/styles.css" />
-
-  <!-- Modal styles (kept here so you don't have to edit styles.css) -->
-  <style>
-    .modalOverlay{
-      position:fixed; inset:0;
-      background:rgba(0,0,0,.55);
-      display:flex; align-items:center; justify-content:center;
-      padding:18px;
-      z-index:9999;
-    }
-    .modalOverlay.hide{ display:none !important; }
-    .modal{
-      width:min(1000px, 98vw);
-      max-height:85vh;
-      overflow:auto;
-      background:rgba(15,17,27,.98);
-      border:1px solid rgba(255,255,255,.12);
-      border-radius:16px;
-      box-shadow:0 20px 60px rgba(0,0,0,.55);
-      padding:16px;
-    }
-    .modalHeader{
-      display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
-      margin-bottom:10px;
-    }
-    .modalTitle{ margin:0; }
-    .modalMeta{ color:rgba(243,246,255,.70); font-size:13px; margin-top:4px; }
-    .modalGrid{
-      display:grid;
-      grid-template-columns: 1fr 1fr;
-      gap:12px;
-    }
-    @media(max-width:900px){ .modalGrid{ grid-template-columns:1fr; } }
-    .readonlyBadge{
-      display:inline-block;
-      padding:6px 10px;
-      border-radius:999px;
-      border:1px solid rgba(255,255,255,.14);
-      background:rgba(255,255,255,.04);
-      font-size:12px;
-      color:rgba(243,246,255,.85);
-      margin-left:10px;
-    }
-    .clickRow{ cursor:pointer; }
-    .clickRow:hover{ background:rgba(255,255,255,.03); }
-  </style>
 </head>
-
 <body>
   <div class="wrap">
     <div class="top">
@@ -113,24 +66,24 @@
     </div>
   </div>
 
-  <!-- VIEW/EDIT MODAL -->
+  <!-- View/Edit Modal -->
   <div id="entryOverlay" class="modalOverlay hide" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="entryTitle">
       <div class="modalHeader">
         <div>
-          <h2 id="entryTitle" class="modalTitle">Entry</h2>
-          <div id="entryMeta" class="modalMeta"></div>
+          <h2 id="entryTitle" style="margin:0">Entry</h2>
+          <div class="muted" id="entrySubtitle"></div>
         </div>
-        <div class="actions">
-          <span id="entryModeBadge" class="readonlyBadge">VIEW ONLY</span>
-          <button id="entryEditBtn" class="btn secondary" type="button" style="display:none">Edit</button>
-          <button id="entrySaveBtn" class="btn" type="button" style="display:none">Save</button>
-          <button id="entryCloseBtn" class="btn secondary" type="button">Close</button>
-        </div>
+        <button id="closeEntryBtn" class="smallBtn" type="button">Close</button>
       </div>
 
       <div id="entryStatus" class="status" role="status" aria-live="polite"></div>
       <div id="entryBody"></div>
+
+      <div class="actions" style="margin-top:12px;justify-content:flex-end">
+        <button id="saveEntryBtn" class="btn" type="button" style="display:none">Save</button>
+        <button id="saveCloseEntryBtn" class="btn secondary" type="button" style="display:none">Save & Close</button>
+      </div>
     </div>
   </div>
 
