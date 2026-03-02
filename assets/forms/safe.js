@@ -30,21 +30,6 @@ function money(cents){
   return v.toLocaleString(undefined, { style:"currency", currency:"USD" });
 }
 
-function todayISO(){
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth()+1).padStart(2,"0");
-  const dd = String(d.getDate()).padStart(2,"0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function timeHHMM(){
-  const d = new Date();
-  const hh = String(d.getHours()).padStart(2,"0");
-  const mm = String(d.getMinutes()).padStart(2,"0");
-  return `${hh}:${mm}`;
-}
-
 function rowInput({ id, label, placeholder = "", type="text" }){
   return `
     <div>
@@ -68,12 +53,28 @@ function qtyRow({ key, label }){
   `;
 }
 
+function todayISODate(){
+  // YYYY-MM-DD local
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function nowHHMM(){
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2,"0");
+  const mm = String(d.getMinutes()).padStart(2,"0");
+  return `${hh}:${mm}`;
+}
+
 export function mountSafeForm(container, ctx){
   container.innerHTML = `
     <form id="safeForm">
       <div class="grid2">
-        ${rowInput({ id:"safe_form_date", label:"Date", type:"date" })}
-        ${rowInput({ id:"safe_form_time", label:"Time", type:"time" })}
+        ${rowInput({ id:"safe_date", label:"Date", type:"date" })}
+        ${rowInput({ id:"safe_time", label:"Time", type:"time" })}
       </div>
 
       ${rowInput({ id:"safe_employee", label:"Employee Name", placeholder:"Name on the form" })}
@@ -155,8 +156,8 @@ export function mountSafeForm(container, ctx){
   const statusEl = container.querySelector("#safe_status");
   const submitBtn = container.querySelector("#safe_submit");
 
-  const dateEl = container.querySelector("#safe_form_date");
-  const timeEl = container.querySelector("#safe_form_time");
+  const dateEl = container.querySelector("#safe_date");
+  const timeEl = container.querySelector("#safe_time");
   const empEl  = container.querySelector("#safe_employee");
   const reg1El = container.querySelector("#safe_reg1");
   const reg2El = container.querySelector("#safe_reg2");
@@ -168,7 +169,7 @@ export function mountSafeForm(container, ctx){
   const totalEl         = container.querySelector("#safe_total");
 
   function setStatus(type, msg){
-    statusEl.className = "status " + type;
+    statusEl.className = "status " + type; // ok | err
     statusEl.textContent = msg;
   }
   function clearStatus(){
@@ -207,66 +208,63 @@ export function mountSafeForm(container, ctx){
     return { bills, reg1, reg2, coins, total: bills + regs + coins };
   }
 
-  // Live calc
+  // Defaults: today + now, employee = first name if available
+  dateEl.value = todayISODate();
+  timeEl.value = nowHHMM();
+  if (ctx?.profile?.first_name && !empEl.value) empEl.value = ctx.profile.first_name;
+
+  // live calc
   container.querySelectorAll("input,textarea").forEach(el => {
     el.addEventListener("input", () => { calc(); clearStatus(); });
   });
 
-  // Clear
+  // clear
   container.querySelector("#safe_clear").addEventListener("click", () => {
+    // keep date/time defaults on clear
     form.reset();
+
+    dateEl.value = todayISODate();
+    timeEl.value = nowHHMM();
+    empEl.value = (ctx?.profile?.first_name || "");
+
     [...DENOMS.bills, ...DENOMS.coins].forEach(x => {
       const el = container.querySelector(`#safe_${x.key}`);
       if (el) el.value = "0";
     });
     reg1El.value = "";
     reg2El.value = "";
-
-    // Re-apply defaults after clear
-    dateEl.value = todayISO();
-    timeEl.value = timeHHMM();
-    empEl.value = defaultEmployeeName();
-
     calc();
     clearStatus();
   });
 
-  function defaultEmployeeName(){
-    const fn = (ctx?.profile?.first_name || "").trim();
-    const ln = (ctx?.profile?.last_name || "").trim();
-    const full = [fn, ln].filter(Boolean).join(" ").trim();
-    if (full) return full;
-
-    const email = ctx?.user?.email || "";
-    const prefix = email.includes("@") ? email.split("@")[0] : email;
-    return prefix || "";
-  }
-
-  // Submit
+  // submit -> Supabase insert
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     clearStatus();
+
+    // Always stamp current date/time at SAVE time
+    const date = todayISODate();
+    const time = nowHHMM();
+    dateEl.value = date;
+    timeEl.value = time;
+
+    const employee_name = (empEl.value || "").trim();
+    const notes = (notesEl.value || "").trim();
 
     if (!ctx?.user?.id) return setStatus("err", "❌ Not logged in.");
     if (!ctx?.profile?.org_id && ctx?.profile?.role !== "admin") {
       return setStatus("err", "❌ Your profile has no org assigned. Admin must assign your org.");
     }
-
-    const form_date = (dateEl.value || "").trim();
-    const form_time = (timeEl.value || "").trim();
-    const employee_name = (empEl.value || "").trim();
-    const notes = (notesEl.value || "").trim();
-
-    if (!form_date) return setStatus("err", "❌ Date is required.");
     if (!employee_name) return setStatus("err", "❌ Employee name is required.");
 
     const computed = calc();
 
+    // IMPORTANT: your DB columns are "date" and "time"
     const payload = {
-      org_id: ctx.profile.org_id ?? null,
+      org_id: ctx.profile.role === "admin" ? (ctx.profile.org_id ?? null) : ctx.profile.org_id,
       created_by: ctx.user.id,
-      form_date,
-      form_time: form_time || null,
+      date,                 // ✅ matches DB
+      time: time || null,   // ✅ matches DB
       employee_name,
       reg1_amount_cents: computed.reg1,
       reg2_amount_cents: computed.reg2,
@@ -294,10 +292,6 @@ export function mountSafeForm(container, ctx){
 
       setStatus("ok", `✅ Saved. Entry ID: ${data.id}`);
       window.dispatchEvent(new CustomEvent("forms:saved", { detail: { type:"safe", id:data.id } }));
-
-      // After save, refresh time (so next save is correct)
-      timeEl.value = timeHHMM();
-
     } catch (err) {
       console.error(err);
       setStatus("err", "❌ Save failed: " + (err?.message || "Check RLS policies."));
@@ -306,15 +300,10 @@ export function mountSafeForm(container, ctx){
     }
   });
 
-  // Initial defaults
-  dateEl.value = todayISO();
-  timeEl.value = timeHHMM();
-  empEl.value = defaultEmployeeName();
-
+  // initial calc
   [...DENOMS.bills, ...DENOMS.coins].forEach(x => {
     const el = container.querySelector(`#safe_${x.key}`);
     if (el && (el.value === "" || el.value == null)) el.value = "0";
   });
-
   calc();
 }
