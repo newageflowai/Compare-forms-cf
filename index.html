@@ -7,75 +7,37 @@
   <link rel="stylesheet" href="/assets/styles.css" />
 </head>
 <body>
-  <div class="wrap" style="max-width:820px">
-    <div class="top" style="align-items:flex-end">
+  <div class="wrap">
+    <div class="top">
       <div>
         <h1>Compare Forms</h1>
-        <div class="muted">Login or create your account.</div>
+        <div class="muted">Login to submit daily forms. Admins manage orgs + users.</div>
       </div>
     </div>
 
     <div class="card">
-      <div class="tabs">
-        <button class="tab active" data-tab="login">Login</button>
-        <button class="tab" data-tab="signup">Sign up</button>
+      <h2>Login</h2>
+      <div class="row">
+        <div>
+          <label>Email</label>
+          <input id="email" type="email" placeholder="you@company.com" autocomplete="email" />
+        </div>
+        <div>
+          <label>Password</label>
+          <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
+        </div>
       </div>
 
-      <div id="panel-login" class="panel">
-        <form id="loginForm">
-          <div class="grid2">
-            <div>
-              <label for="loginEmail">Email</label>
-              <input id="loginEmail" type="email" autocomplete="email" required />
-            </div>
-            <div>
-              <label for="loginPass">Password</label>
-              <input id="loginPass" type="password" autocomplete="current-password" required />
-            </div>
-          </div>
-
-          <div class="actions" style="margin-top:12px">
-            <button class="btn" id="loginBtn" type="submit">Login</button>
-          </div>
-
-          <div id="authStatus" class="status" role="status" aria-live="polite"></div>
-        </form>
+      <div class="actions" style="margin-top:12px">
+        <button class="btn" id="loginBtn" type="button">Login</button>
+        <button class="btn secondary" id="signupBtn" type="button">Create Account</button>
+        <button class="btn secondary" id="forgotBtn" type="button">Forgot Password</button>
       </div>
 
-      <div id="panel-signup" class="panel hide">
-        <form id="signupForm">
-          <div class="grid2">
-            <div>
-              <label for="signupFirst">First name</label>
-              <input id="signupFirst" type="text" autocomplete="given-name" required />
-            </div>
-            <div>
-              <label for="signupLast">Last name</label>
-              <input id="signupLast" type="text" autocomplete="family-name" required />
-            </div>
-          </div>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
 
-          <div class="grid2" style="margin-top:10px">
-            <div>
-              <label for="signupEmail">Email</label>
-              <input id="signupEmail" type="email" autocomplete="email" required />
-            </div>
-            <div>
-              <label for="signupPass">Password</label>
-              <input id="signupPass" type="password" autocomplete="new-password" minlength="6" required />
-            </div>
-          </div>
-
-          <div class="actions" style="margin-top:12px">
-            <button class="btn" id="signupBtn" type="submit">Create account</button>
-          </div>
-
-          <div class="muted" style="margin-top:8px">
-            If email confirmation is enabled in Supabase, you may need to verify your email first.
-          </div>
-
-          <div id="signupStatus" class="status" role="status" aria-live="polite"></div>
-        </form>
+      <div class="muted" style="margin-top:10px">
+        New users can create an account here. Admin must assign an organization for full access.
       </div>
     </div>
   </div>
