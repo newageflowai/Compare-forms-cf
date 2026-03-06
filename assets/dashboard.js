@@ -1,226 +1,57 @@
 import { supabase } from "./supabase.js";
 import { mountSafeForm } from "./forms/safe.js";
 
-const whoami = document.getElementById("whoami");
-const logoutBtn = document.getElementById("logoutBtn");
-const adminLink = document.getElementById("adminLink");
-const profileBtn = document.getElementById("profileBtn");
-const refreshBtn = document.getElementById("refreshBtn");
-const recentBody = document.getElementById("recentBody");
+const $ = (id) => document.getElementById(id);
+
+const whoami = $("whoami");
+const logoutBtn = $("logoutBtn");
+const adminLink = $("adminLink");
+const profileBtn = $("profileBtn");
+const refreshBtn = $("refreshBtn");
+const recentBody = $("recentBody");
 
 const panels = {
-  safe: document.getElementById("panel-safe"),
-  loteria: document.getElementById("panel-loteria"),
-  cashpay: document.getElementById("panel-cashpay"),
-  transfer: document.getElementById("panel-transfer"),
-  daily: document.getElementById("panel-daily"),
+  safe: $("panel-safe"),
+  loteria: $("panel-loteria"),
+  cashpay: $("panel-cashpay"),
+  transfer: $("panel-transfer"),
+  daily: $("panel-daily"),
 };
 
+let ctx = { user: null, profile: null };
+
 function esc(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (m) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])
-  );
+  return String(s ?? "").replace(/[&<>"']/g, (m) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[m]));
 }
 
-function fmtDT(ts) {
+function show(el) {
+  if (el) el.classList.remove("hide");
+}
+
+function hide(el) {
+  if (el) el.classList.add("hide");
+}
+
+function fmtDateTime(value) {
   try {
-    return new Date(ts).toLocaleString();
+    return new Date(value).toLocaleString();
   } catch {
-    return String(ts ?? "");
+    return String(value ?? "");
   }
 }
 
-let ctx = null; // { user, profile }
-
-function bindTabs() {
-  const tabs = document.querySelectorAll(".tab");
-  tabs.forEach((t) => {
-    t.addEventListener("click", () => {
-      tabs.forEach((x) => x.classList.remove("active"));
-      t.classList.add("active");
-
-      const key = t.dataset.tab;
-      Object.values(panels).forEach((p) => p.classList.add("hide"));
-      panels[key].classList.remove("hide");
-    });
-  });
-}
-
-async function requireSession() {
-  const { data } = await supabase.auth.getSession();
-  if (!data?.session) {
-    location.href = "/";
-    return null;
+function fmtDate(value) {
+  try {
+    return new Date(value).toLocaleDateString();
+  } catch {
+    return String(value ?? "");
   }
-  return data.session;
-}
-
-async function loadProfile(userId) {
-  // NOTE: Your RLS previously caused recursion; you fixed it.
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, email, first_name, last_name, role, org_id")
-    .eq("id", userId)
-    .single();
-
-  if (error) throw error;
-  return data;
-}
-
-function fullName(profile) {
-  const fn = (profile?.first_name || "").trim();
-  const ln = (profile?.last_name || "").trim();
-  const name = (fn + " " + ln).trim();
-  return name || "User";
-}
-
-function showProfileModal() {
-  const existing = document.getElementById("profileModalBackdrop");
-  if (existing) existing.remove();
-
-  const backdrop = document.createElement("div");
-  backdrop.id = "profileModalBackdrop";
-  backdrop.style.position = "fixed";
-  backdrop.style.inset = "0";
-  backdrop.style.background = "rgba(0,0,0,.55)";
-  backdrop.style.display = "flex";
-  backdrop.style.alignItems = "center";
-  backdrop.style.justifyContent = "center";
-  backdrop.style.padding = "20px";
-  backdrop.style.zIndex = "9999";
-
-  const card = document.createElement("div");
-  card.className = "card";
-  card.style.maxWidth = "640px";
-  card.style.width = "100%";
-
-  card.innerHTML = `
-    <div class="actions" style="justify-content:space-between;align-items:center">
-      <div>
-        <h2 style="margin:0">Profile</h2>
-        <div class="muted">Update your first/last name.</div>
-      </div>
-      <button class="btn secondary" id="profileCloseBtn" type="button">Close</button>
-    </div>
-
-    <div style="height:10px"></div>
-
-    <div class="grid2">
-      <div>
-        <label for="pf_first">First name</label>
-        <input id="pf_first" type="text" value="${esc(ctx?.profile?.first_name || "")}" />
-      </div>
-      <div>
-        <label for="pf_last">Last name</label>
-        <input id="pf_last" type="text" value="${esc(ctx?.profile?.last_name || "")}" />
-      </div>
-    </div>
-
-    <div class="actions" style="margin-top:12px">
-      <button class="btn" id="profileSaveBtn" type="button">Save</button>
-    </div>
-
-    <div id="profileStatus" class="status" role="status" aria-live="polite"></div>
-  `;
-
-  backdrop.appendChild(card);
-  document.body.appendChild(backdrop);
-
-  const close = () => backdrop.remove();
-
-  backdrop.addEventListener("click", (e) => {
-    if (e.target === backdrop) close();
-  });
-
-  card.querySelector("#profileCloseBtn").addEventListener("click", close);
-
-  card.querySelector("#profileSaveBtn").addEventListener("click", async () => {
-    const st = card.querySelector("#profileStatus");
-    st.className = "status";
-    st.textContent = "";
-
-    const first_name = card.querySelector("#pf_first").value.trim();
-    const last_name = card.querySelector("#pf_last").value.trim();
-
-    if (!first_name || !last_name) {
-      st.className = "status err";
-      st.textContent = "❌ First and last name required.";
-      return;
-    }
-
-    try {
-      st.className = "status ok";
-      st.textContent = "Saving…";
-
-      const { error } = await supabase
-        .from("profiles")
-        .update({ first_name, last_name })
-        .eq("id", ctx.user.id);
-
-      if (error) throw error;
-
-      // update local ctx + header
-      ctx.profile.first_name = first_name;
-      ctx.profile.last_name = last_name;
-      whoami.textContent = `${ctx.profile.email} • ${fullName(ctx.profile)} • ${String(ctx.profile.role || "").toUpperCase()}`;
-
-      st.className = "status ok";
-      st.textContent = "✅ Saved.";
-    } catch (err) {
-      console.error(err);
-      st.className = "status err";
-      st.textContent = "❌ Save failed: " + (err?.message || "Unknown error");
-    }
-  });
-}
-
-async function loadRecentSafe() {
-  recentBody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
-
-  // IMPORTANT: your table currently uses column names: date, time (NOT form_date/form_time)
-  const q = supabase
-    .from("form_safe")
-    .select("id, created_at, date, time, employee_name, notes, created_by, org_id")
-    .order("created_at", { ascending: false })
-    .limit(25);
-
-  // If user is not admin, rely on RLS to restrict rows
-  const { data, error } = await q;
-  if (error) {
-    recentBody.innerHTML = `<tr><td colspan="6">Error: ${esc(error.message)}</td></tr>`;
-    return;
-  }
-
-  if (!data?.length) {
-    recentBody.innerHTML = `<tr><td colspan="6" class="muted">No entries yet.</td></tr>`;
-    return;
-  }
-
-  recentBody.innerHTML = data
-    .map((r) => {
-      return `
-        <tr class="clickRow" data-type="safe" data-id="${esc(r.id)}" style="cursor:pointer">
-          <td>${esc(fmtDT(r.created_at))}</td>
-          <td>Safe</td>
-          <td>${esc(r.date || "")}</td>
-          <td>${esc(r.employee_name || "")}</td>
-          <td>${esc((r.notes || "").slice(0, 40))}</td>
-          <td class="mono">${esc(r.id)}</td>
-        </tr>
-      `;
-    })
-    .join("");
-
-  recentBody.querySelectorAll(".clickRow").forEach((tr) => {
-    tr.addEventListener("click", () => {
-      openSafeEntryModal(tr.dataset.id);
-    });
-  });
-}
-
-function money(cents) {
-  const v = (Number(cents) || 0) / 100;
-  return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
 }
 
 function int0(v) {
@@ -229,292 +60,619 @@ function int0(v) {
 }
 
 function toCents(v) {
-  const x = Number(String(v || "").replace(/[$,]/g, ""));
+  const x = Number(String(v ?? "").replace(/[$,]/g, ""));
   return Number.isFinite(x) ? Math.round(x * 100) : 0;
 }
 
-function safeTotals(row) {
-  const bills =
+function money(cents) {
+  const v = (Number(cents) || 0) / 100;
+  return v.toLocaleString(undefined, { style: "currency", currency: "USD" });
+}
+
+function fullName(profile) {
+  const first = (profile?.first_name || "").trim();
+  const last = (profile?.last_name || "").trim();
+  return [first, last].filter(Boolean).join(" ").trim();
+}
+
+function showPageError(message) {
+  console.error(message);
+  if (whoami) {
+    whoami.textContent = "Error: " + message;
+  }
+  if (recentBody) {
+    recentBody.innerHTML = `<tr><td colspan="6" class="muted">${esc(message)}</td></tr>`;
+  }
+}
+
+async function requireSession() {
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+
+  const session = data?.session;
+  if (!session?.user) {
+    window.location.href = "/";
+    return null;
+  }
+  return session;
+}
+
+async function loadProfile(userId) {
+  // Keep this minimal and tolerant.
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, role, org_id, first_name, last_name")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+
+  // Return a safe default profile if row is missing
+  return data || {
+    id: userId,
+    role: "user",
+    org_id: null,
+    first_name: "",
+    last_name: "",
+  };
+}
+
+function renderWhoAmI() {
+  const name = fullName(ctx.profile);
+  const role = String(ctx.profile?.role || "user").toUpperCase();
+  const email = ctx.user?.email || "";
+  whoami.textContent = `${email}${name ? " • " + name : ""} • ${role}`;
+}
+
+function bindTabs() {
+  const tabs = document.querySelectorAll(".tab");
+  tabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      tabs.forEach((t) => t.classList.remove("active"));
+      btn.classList.add("active");
+
+      const tab = btn.dataset.tab;
+      Object.entries(panels).forEach(([key, panel]) => {
+        if (!panel) return;
+        if (key === tab) show(panel);
+        else hide(panel);
+      });
+
+      if (tab === "safe") {
+        mountSafeForm(panels.safe, ctx);
+      } else if (panels[tab]) {
+        panels[tab].innerHTML = `<div class="muted">Form coming next…</div>`;
+      }
+    });
+  });
+}
+
+function ensureModalShell() {
+  if (document.getElementById("entryModalOverlay")) return;
+
+  const style = document.createElement("style");
+  style.textContent = `
+    .modalOverlay{
+      position:fixed; inset:0; background:rgba(0,0,0,.65);
+      display:flex; align-items:center; justify-content:center;
+      padding:18px; z-index:9999;
+    }
+    .modalCard{
+      width:min(980px, 100%);
+      max-height:92vh;
+      overflow:auto;
+      background:rgba(15,17,27,.96);
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:16px;
+      box-shadow:0 12px 60px rgba(0,0,0,.55);
+      padding:16px;
+    }
+    .modalTop{
+      display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+      margin-bottom:10px;
+    }
+    .modalTop h3{ margin:0; font-size:18px; }
+    .modalTop .sub{ color:rgba(243,246,255,.70); font-size:12px; margin-top:4px; }
+    .modalBtns{ display:flex; gap:10px; align-items:center; }
+    .modalGrid2{ display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    @media (max-width: 760px){ .modalGrid2{ grid-template-columns:1fr; } }
+    .miniNote{ color:rgba(243,246,255,.70); font-size:12px; margin-top:6px; }
+    .hr{ height:1px; background:rgba(255,255,255,.08); margin:12px 0; }
+    .kv{ display:flex; justify-content:space-between; gap:10px; margin-top:8px; }
+    .kv b{ font-weight:800; }
+    .modalCard table{ width:100%; border-collapse:collapse; }
+    .modalCard th,.modalCard td{ padding:8px 6px; border-bottom:1px solid rgba(255,255,255,.08); }
+    .modalCard th{ text-align:left; color:rgba(243,246,255,.80); font-size:12px; }
+    .modalCard input, .modalCard textarea{
+      width:100%;
+      padding:10px 12px;
+      border-radius:12px;
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.04);
+      color:inherit;
+      outline:none;
+    }
+    .modalCard textarea{ min-height:90px; resize:vertical; }
+    .pill{
+      display:inline-block; padding:3px 10px; border-radius:999px;
+      border:1px solid rgba(255,255,255,.12);
+      color:rgba(243,246,255,.85); font-size:12px;
+    }
+    .rowTight td{ padding:6px; }
+    .mono{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size:12px;
+    }
+    .modalStatus{ margin-top:10px; }
+    .danger{
+      border:1px solid rgba(255,90,90,.35) !important;
+      background:rgba(255,90,90,.12) !important;
+      color:#ffd2d2 !important;
+    }
+  `;
+  document.head.appendChild(style);
+
+  const overlay = document.createElement("div");
+  overlay.id = "entryModalOverlay";
+  overlay.className = "modalOverlay";
+  overlay.style.display = "none";
+  overlay.innerHTML = `
+    <div class="modalCard" role="dialog" aria-modal="true" aria-label="Modal">
+      <div class="modalTop">
+        <div>
+          <h3 id="entryModalTitle">Modal</h3>
+          <div class="sub" id="entryModalSub"></div>
+        </div>
+        <div class="modalBtns">
+          <button class="btn secondary" id="entryModalClose" type="button">Close</button>
+        </div>
+      </div>
+      <div id="entryModalBody"></div>
+      <div id="entryModalStatus" class="status modalStatus" role="status" aria-live="polite"></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) closeModal();
+  });
+
+  document.getElementById("entryModalClose").addEventListener("click", closeModal);
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeModal();
+  });
+}
+
+function openModal() {
+  ensureModalShell();
+  document.getElementById("entryModalOverlay").style.display = "flex";
+}
+
+function closeModal() {
+  const overlay = document.getElementById("entryModalOverlay");
+  if (!overlay) return;
+  overlay.style.display = "none";
+  document.getElementById("entryModalBody").innerHTML = "";
+  const st = document.getElementById("entryModalStatus");
+  st.className = "status";
+  st.textContent = "";
+}
+
+function setModalStatus(type, msg) {
+  const st = document.getElementById("entryModalStatus");
+  st.className = "status " + (type || "");
+  st.textContent = msg || "";
+}
+
+function calcBills(row) {
+  return (
     int0(row.bills_100_qty) * 10000 +
     int0(row.bills_50_qty) * 5000 +
     int0(row.bills_20_qty) * 2000 +
     int0(row.bills_10_qty) * 1000 +
     int0(row.bills_5_qty) * 500 +
-    int0(row.bills_1_qty) * 100;
+    int0(row.bills_1_qty) * 100
+  );
+}
 
-  const regs = (row.reg1_amount_cents || 0) + (row.reg2_amount_cents || 0);
-  const coins =
+function calcCoins(row) {
+  return (
     int0(row.quarters_qty) * 25 +
     int0(row.dimes_qty) * 10 +
     int0(row.nickels_qty) * 5 +
-    int0(row.pennies_qty) * 1;
+    int0(row.pennies_qty) * 1
+  );
+}
 
-  return { bills, regs, coins, total: bills + regs + coins };
+function calcTotal(row) {
+  return calcBills(row) + int0(row.reg1_amount_cents) + int0(row.reg2_amount_cents) + calcCoins(row);
+}
+
+function billRow(label, key, unitCents, data, isAdmin) {
+  const qty = int0(data?.[key]);
+  return `
+    <tr>
+      <td>${esc(label)}</td>
+      <td><input id="m_${esc(key)}" type="number" min="0" step="1" value="${esc(qty)}" ${isAdmin ? "" : "disabled"} /></td>
+      <td class="mono" id="m_amt_${esc(key)}">${money(qty * unitCents)}</td>
+    </tr>
+  `;
+}
+
+function coinRow(label, key, unitCents, data, isAdmin) {
+  const qty = int0(data?.[key]);
+  return `
+    <tr>
+      <td>${esc(label)}</td>
+      <td><input id="m_${esc(key)}" type="number" min="0" step="1" value="${esc(qty)}" ${isAdmin ? "" : "disabled"} /></td>
+      <td class="mono" id="m_amt_${esc(key)}">${money(qty * unitCents)}</td>
+    </tr>
+  `;
+}
+
+async function openProfileModal() {
+  openModal();
+  document.getElementById("entryModalTitle").textContent = "Profile";
+  document.getElementById("entryModalSub").textContent = ctx?.user?.email || "";
+  setModalStatus("", "");
+
+  const body = document.getElementById("entryModalBody");
+  body.innerHTML = `
+    <div class="modalGrid2">
+      <div>
+        <label>First Name</label>
+        <input id="p_first" type="text" value="${esc(ctx.profile?.first_name || "")}" />
+      </div>
+      <div>
+        <label>Last Name</label>
+        <input id="p_last" type="text" value="${esc(ctx.profile?.last_name || "")}" />
+      </div>
+    </div>
+
+    <div class="miniNote">Update your display name on the dashboard.</div>
+
+    <div class="actions" style="margin-top:12px; justify-content:flex-end;">
+      <button class="btn" id="p_save" type="button">Save</button>
+      <button class="btn secondary" id="p_close" type="button">Close</button>
+    </div>
+  `;
+
+  body.querySelector("#p_close").addEventListener("click", closeModal);
+
+  body.querySelector("#p_save").addEventListener("click", async () => {
+    try {
+      setModalStatus("ok", "Saving…");
+
+      const first_name = (body.querySelector("#p_first").value || "").trim();
+      const last_name = (body.querySelector("#p_last").value || "").trim();
+
+      const { error } = await supabase
+        .from("profiles")
+        .update({ first_name, last_name })
+        .eq("id", ctx.user.id);
+
+      if (error) throw error;
+
+      ctx.profile.first_name = first_name;
+      ctx.profile.last_name = last_name;
+      renderWhoAmI();
+
+      setModalStatus("ok", "✅ Profile saved.");
+    } catch (err) {
+      console.error(err);
+      setModalStatus("err", "❌ Save failed: " + (err?.message || "Unknown error"));
+    }
+  });
 }
 
 async function openSafeEntryModal(id) {
-  const existing = document.getElementById("entryModalBackdrop");
-  if (existing) existing.remove();
+  openModal();
+  document.getElementById("entryModalTitle").textContent = "Safe Entry";
+  document.getElementById("entryModalSub").textContent = id;
+  setModalStatus("", "");
 
-  const backdrop = document.createElement("div");
-  backdrop.id = "entryModalBackdrop";
-  backdrop.style.position = "fixed";
-  backdrop.style.inset = "0";
-  backdrop.style.background = "rgba(0,0,0,.55)";
-  backdrop.style.display = "flex";
-  backdrop.style.alignItems = "center";
-  backdrop.style.justifyContent = "center";
-  backdrop.style.padding = "20px";
-  backdrop.style.zIndex = "9999";
+  const body = document.getElementById("entryModalBody");
+  body.innerHTML = `<div class="muted">Loading…</div>`;
 
-  const card = document.createElement("div");
-  card.className = "card";
-  card.style.maxWidth = "980px";
-  card.style.width = "100%";
-  card.style.maxHeight = "85vh";
-  card.style.overflow = "auto";
+  try {
+    const { data, error } = await supabase
+      .from("form_safe")
+      .select("*")
+      .eq("id", id)
+      .single();
 
-  card.innerHTML = `
-    <div class="actions" style="justify-content:space-between;align-items:center">
-      <div>
-        <h2 style="margin:0">Safe Entry</h2>
-        <div class="muted mono">${esc(id)}</div>
+    if (error) throw error;
+
+    const isAdmin = String(ctx.profile?.role || "").toLowerCase() === "admin";
+
+    body.innerHTML = `
+      <div class="modalGrid2">
+        <div>
+          <label>Date</label>
+          <input id="m_date" type="date" value="${esc(data.date || "")}" ${isAdmin ? "" : "disabled"} />
+        </div>
+        <div>
+          <label>Time</label>
+          <input id="m_time" type="time" value="${esc(data.time || "")}" ${isAdmin ? "" : "disabled"} />
+        </div>
       </div>
-      <div class="actions">
-        <button class="btn secondary" id="entryCloseBtn" type="button">Close</button>
+
+      <div style="margin-top:10px">
+        <label>Employee Name</label>
+        <input id="m_employee" type="text" value="${esc(data.employee_name || "")}" ${isAdmin ? "" : "disabled"} />
       </div>
-    </div>
-    <div id="entryBody" class="muted" style="margin-top:10px">Loading…</div>
-  `;
 
-  backdrop.appendChild(card);
-  document.body.appendChild(backdrop);
+      <div class="hr"></div>
 
-  const close = () => backdrop.remove();
-  backdrop.addEventListener("click", (e) => {
-    if (e.target === backdrop) close();
-  });
-  card.querySelector("#entryCloseBtn").addEventListener("click", close);
-
-  const entryBody = card.querySelector("#entryBody");
-
-  const { data, error } = await supabase
-    .from("form_safe")
-    .select("*")
-    .eq("id", id)
-    .single();
-
-  if (error) {
-    entryBody.innerHTML = `Error: ${esc(error.message)}`;
-    return;
-  }
-
-  const isAdmin = String(ctx?.profile?.role || "").toLowerCase() === "admin";
-  const t = safeTotals(data);
-
-  entryBody.className = "";
-  entryBody.innerHTML = `
-    <div class="grid2">
-      <div>
-        <label>Date</label>
-        <input id="v_date" type="date" value="${esc(data.date || "")}" ${isAdmin ? "" : "disabled"} />
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div class="pill">Bills</div>
+        <div class="mono" id="m_bills_sub">${money(calcBills(data))}</div>
       </div>
-      <div>
-        <label>Time</label>
-        <input id="v_time" type="text" value="${esc(data.time || "")}" ${isAdmin ? "" : "disabled"} />
+      <div style="overflow:auto;margin-top:8px;">
+        <table>
+          <thead>
+            <tr><th>Denomination</th><th style="width:160px;">Qty</th><th>Amount</th></tr>
+          </thead>
+          <tbody class="rowTight">
+            ${billRow("$100", "bills_100_qty", 10000, data, isAdmin)}
+            ${billRow("$50", "bills_50_qty", 5000, data, isAdmin)}
+            ${billRow("$20", "bills_20_qty", 2000, data, isAdmin)}
+            ${billRow("$10", "bills_10_qty", 1000, data, isAdmin)}
+            ${billRow("$5", "bills_5_qty", 500, data, isAdmin)}
+            ${billRow("$1", "bills_1_qty", 100, data, isAdmin)}
+          </tbody>
+        </table>
       </div>
-    </div>
 
-    <div style="margin-top:10px">
-      <label>Employee Name</label>
-      <input id="v_employee" type="text" value="${esc(data.employee_name || "")}" ${isAdmin ? "" : "disabled"} />
-    </div>
+      <div class="hr"></div>
 
-    <div class="sectionTitle" style="margin-top:12px">Bills</div>
-    <div class="grid2">
-      <div><label>$100 qty</label><input id="v_b100" type="number" min="0" step="1" value="${esc(data.bills_100_qty ?? 0)}" ${isAdmin ? "" : "disabled"} /></div>
-      <div><label>$50 qty</label><input id="v_b50" type="number" min="0" step="1" value="${esc(data.bills_50_qty ?? 0)}" ${isAdmin ? "" : "disabled"} /></div>
-      <div><label>$20 qty</label><input id="v_b20" type="number" min="0" step="1" value="${esc(data.bills_20_qty ?? 0)}" ${isAdmin ? "" : "disabled"} /></div>
-      <div><label>$10 qty</label><input id="v_b10" type="number" min="0" step="1" value="${esc(data.bills_10_qty ?? 0)}" ${isAdmin ? "" : "disabled"} /></div>
-      <div><label>$5 qty</label><input id="v_b5" type="number" min="0" step="1" value="${esc(data.bills_5_qty ?? 0)}" ${isAdmin ? "" : "disabled"} /></div>
-      <div><label>$1 qty</label><input id="v_b1" type="number" min="0" step="1" value="${esc(data.bills_1_qty ?? 0)}" ${isAdmin ? "" : "disabled"} /></div>
-    </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div class="pill">Registers</div>
+        <div class="mono" id="m_regs_sub">${money(int0(data.reg1_amount_cents) + int0(data.reg2_amount_cents))}</div>
+      </div>
+      <div class="modalGrid2" style="margin-top:8px;">
+        <div>
+          <label>Register 1</label>
+          <input id="m_reg1" type="text" value="${esc(((int0(data.reg1_amount_cents)) / 100).toFixed(2))}" ${isAdmin ? "" : "disabled"} />
+        </div>
+        <div>
+          <label>Register 2</label>
+          <input id="m_reg2" type="text" value="${esc(((int0(data.reg2_amount_cents)) / 100).toFixed(2))}" ${isAdmin ? "" : "disabled"} />
+        </div>
+      </div>
 
-    <div class="totalsRow" style="margin-top:8px">
-      <div class="muted">Bills Subtotal</div>
-      <div class="mono" id="v_bills_sub">${money(t.bills)}</div>
-    </div>
+      <div class="hr"></div>
 
-    <div class="sectionTitle" style="margin-top:12px">Registers</div>
-    <div class="grid2">
-      <div><label>Register 1</label><input id="v_reg1" type="text" value="${esc(((data.reg1_amount_cents||0)/100).toFixed(2))}" ${isAdmin ? "" : "disabled"} /></div>
-      <div><label>Register 2</label><input id="v_reg2" type="text" value="${esc(((data.reg2_amount_cents||0)/100).toFixed(2))}" ${isAdmin ? "" : "disabled"} /></div>
-    </div>
-    <div class="totalsRow" style="margin-top:8px">
-      <div class="muted">Registers Subtotal</div>
-      <div class="mono" id="v_regs_sub">${money(t.regs)}</div>
-    </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div class="pill">Coins</div>
+        <div class="mono" id="m_coins_sub">${money(calcCoins(data))}</div>
+      </div>
+      <div style="overflow:auto;margin-top:8px;">
+        <table>
+          <thead>
+            <tr><th>Coin</th><th style="width:160px;">Qty</th><th>Amount</th></tr>
+          </thead>
+          <tbody class="rowTight">
+            ${coinRow("Quarters", "quarters_qty", 25, data, isAdmin)}
+            ${coinRow("Dimes", "dimes_qty", 10, data, isAdmin)}
+            ${coinRow("Nickels", "nickels_qty", 5, data, isAdmin)}
+            ${coinRow("Pennies", "pennies_qty", 1, data, isAdmin)}
+          </tbody>
+        </table>
+      </div>
 
-    <div class="sectionTitle" style="margin-top:12px">Coins</div>
-    <div class="grid2">
-      <div><label>Quarters qty</label><input id="v_q" type="number" min="0" step="1" value="${esc(data.quarters_qty ?? 0)}" ${isAdmin ? "" : "disabled"} /></div>
-      <div><label>Dimes qty</label><input id="v_d" type="number" min="0" step="1" value="${esc(data.dimes_qty ?? 0)}" ${isAdmin ? "" : "disabled"} /></div>
-      <div><label>Nickels qty</label><input id="v_n" type="number" min="0" step="1" value="${esc(data.nickels_qty ?? 0)}" ${isAdmin ? "" : "disabled"} /></div>
-      <div><label>Pennies qty</label><input id="v_p" type="number" min="0" step="1" value="${esc(data.pennies_qty ?? 0)}" ${isAdmin ? "" : "disabled"} /></div>
-    </div>
-    <div class="totalsRow" style="margin-top:8px">
-      <div class="muted">Coins Subtotal</div>
-      <div class="mono" id="v_coins_sub">${money(t.coins)}</div>
-    </div>
+      <div class="hr"></div>
 
-    <div style="margin-top:12px">
       <label>Notes</label>
-      <textarea id="v_notes" ${isAdmin ? "" : "disabled"}>${esc(data.notes || "")}</textarea>
-    </div>
+      <textarea id="m_notes" ${isAdmin ? "" : "disabled"}>${esc(data.notes || "")}</textarea>
 
-    <div class="totalsRow" style="margin-top:12px">
-      <div style="font-weight:800">TOTAL</div>
-      <div class="mono" id="v_total" style="font-weight:900">${money(t.total)}</div>
-    </div>
-
-    ${isAdmin ? `
-      <div class="actions" style="margin-top:12px">
-        <button class="btn" id="entrySaveBtn" type="button">Save Changes</button>
-        <button class="btn secondary" id="entryDeleteBtn" type="button">Delete</button>
+      <div class="kv">
+        <b>TOTAL</b>
+        <b class="mono" id="m_total">${money(calcTotal(data))}</b>
       </div>
-    ` : ""}
 
-    <div id="entryStatus" class="status" role="status" aria-live="polite"></div>
-  `;
+      <div class="actions" style="margin-top:12px;justify-content:space-between;">
+        <div>
+          ${isAdmin ? `<button class="btn danger" id="entryDeleteBtn" type="button">Delete</button>` : ``}
+        </div>
+        <div style="display:flex;gap:10px;">
+          ${isAdmin ? `<button class="btn" id="entrySaveBtn" type="button">Save Changes</button>` : ``}
+          <button class="btn secondary" id="entryCloseBtn2" type="button">Close</button>
+        </div>
+      </div>
+    `;
 
-  // live total recalc
-  function recalc() {
-    const row = {
-      bills_100_qty: int0(card.querySelector("#v_b100").value),
-      bills_50_qty:  int0(card.querySelector("#v_b50").value),
-      bills_20_qty:  int0(card.querySelector("#v_b20").value),
-      bills_10_qty:  int0(card.querySelector("#v_b10").value),
-      bills_5_qty:   int0(card.querySelector("#v_b5").value),
-      bills_1_qty:   int0(card.querySelector("#v_b1").value),
-      reg1_amount_cents: toCents(card.querySelector("#v_reg1").value),
-      reg2_amount_cents: toCents(card.querySelector("#v_reg2").value),
-      quarters_qty: int0(card.querySelector("#v_q").value),
-      dimes_qty:    int0(card.querySelector("#v_d").value),
-      nickels_qty:  int0(card.querySelector("#v_n").value),
-      pennies_qty:  int0(card.querySelector("#v_p").value),
+    body.querySelector("#entryCloseBtn2").addEventListener("click", closeModal);
+
+    const recalc = () => {
+      const row = {
+        bills_100_qty: int0(body.querySelector("#m_bills_100_qty")?.value),
+        bills_50_qty: int0(body.querySelector("#m_bills_50_qty")?.value),
+        bills_20_qty: int0(body.querySelector("#m_bills_20_qty")?.value),
+        bills_10_qty: int0(body.querySelector("#m_bills_10_qty")?.value),
+        bills_5_qty: int0(body.querySelector("#m_bills_5_qty")?.value),
+        bills_1_qty: int0(body.querySelector("#m_bills_1_qty")?.value),
+        reg1_amount_cents: toCents(body.querySelector("#m_reg1")?.value),
+        reg2_amount_cents: toCents(body.querySelector("#m_reg2")?.value),
+        quarters_qty: int0(body.querySelector("#m_quarters_qty")?.value),
+        dimes_qty: int0(body.querySelector("#m_dimes_qty")?.value),
+        nickels_qty: int0(body.querySelector("#m_nickels_qty")?.value),
+        pennies_qty: int0(body.querySelector("#m_pennies_qty")?.value),
+      };
+
+      body.querySelector("#m_bills_sub").textContent = money(calcBills(row));
+      body.querySelector("#m_regs_sub").textContent = money(int0(row.reg1_amount_cents) + int0(row.reg2_amount_cents));
+      body.querySelector("#m_coins_sub").textContent = money(calcCoins(row));
+      body.querySelector("#m_total").textContent = money(calcTotal(row));
+
+      const billDefs = [
+        ["bills_100_qty", 10000],
+        ["bills_50_qty", 5000],
+        ["bills_20_qty", 2000],
+        ["bills_10_qty", 1000],
+        ["bills_5_qty", 500],
+        ["bills_1_qty", 100],
+      ];
+      billDefs.forEach(([key, cents]) => {
+        const cell = body.querySelector(`#m_amt_${key}`);
+        if (cell) cell.textContent = money(int0(row[key]) * cents);
+      });
+
+      const coinDefs = [
+        ["quarters_qty", 25],
+        ["dimes_qty", 10],
+        ["nickels_qty", 5],
+        ["pennies_qty", 1],
+      ];
+      coinDefs.forEach(([key, cents]) => {
+        const cell = body.querySelector(`#m_amt_${key}`);
+        if (cell) cell.textContent = money(int0(row[key]) * cents);
+      });
     };
-    const tt = safeTotals(row);
-    card.querySelector("#v_bills_sub").textContent = money(tt.bills);
-    card.querySelector("#v_regs_sub").textContent = money(tt.regs);
-    card.querySelector("#v_coins_sub").textContent = money(tt.coins);
-    card.querySelector("#v_total").textContent = money(tt.total);
+
+    if (isAdmin) {
+      body.querySelectorAll("input,textarea").forEach((el) => el.addEventListener("input", recalc));
+
+      body.querySelector("#entrySaveBtn").addEventListener("click", async () => {
+        try {
+          setModalStatus("ok", "Saving…");
+
+          const payload = {
+            date: body.querySelector("#m_date").value || null,
+            time: body.querySelector("#m_time").value || null,
+            employee_name: body.querySelector("#m_employee").value.trim() || null,
+            bills_100_qty: int0(body.querySelector("#m_bills_100_qty").value),
+            bills_50_qty: int0(body.querySelector("#m_bills_50_qty").value),
+            bills_20_qty: int0(body.querySelector("#m_bills_20_qty").value),
+            bills_10_qty: int0(body.querySelector("#m_bills_10_qty").value),
+            bills_5_qty: int0(body.querySelector("#m_bills_5_qty").value),
+            bills_1_qty: int0(body.querySelector("#m_bills_1_qty").value),
+            reg1_amount_cents: toCents(body.querySelector("#m_reg1").value),
+            reg2_amount_cents: toCents(body.querySelector("#m_reg2").value),
+            quarters_qty: int0(body.querySelector("#m_quarters_qty").value),
+            dimes_qty: int0(body.querySelector("#m_dimes_qty").value),
+            nickels_qty: int0(body.querySelector("#m_nickels_qty").value),
+            pennies_qty: int0(body.querySelector("#m_pennies_qty").value),
+            notes: body.querySelector("#m_notes").value.trim() || null,
+          };
+
+          const { error: upErr } = await supabase
+            .from("form_safe")
+            .update(payload)
+            .eq("id", id);
+
+          if (upErr) throw upErr;
+
+          setModalStatus("ok", "✅ Saved.");
+          await loadRecentSafe();
+        } catch (err) {
+          console.error(err);
+          setModalStatus("err", "❌ Save failed: " + (err?.message || "Unknown error"));
+        }
+      });
+
+      body.querySelector("#entryDeleteBtn").addEventListener("click", async () => {
+        try {
+          if (!confirm("Delete this entry? This cannot be undone.")) return;
+          setModalStatus("ok", "Deleting…");
+
+          const { error: delErr } = await supabase
+            .from("form_safe")
+            .delete()
+            .eq("id", id);
+
+          if (delErr) throw delErr;
+
+          setModalStatus("ok", "✅ Deleted.");
+          await loadRecentSafe();
+          setTimeout(closeModal, 250);
+        } catch (err) {
+          console.error(err);
+          setModalStatus("err", "❌ Delete failed: " + (err?.message || "Unknown error"));
+        }
+      });
+    }
+  } catch (err) {
+    console.error(err);
+    body.innerHTML = `<div class="muted">Error: ${esc(err?.message || "Could not load entry")}</div>`;
   }
+}
 
-  if (isAdmin) {
-    card.querySelectorAll("input,textarea").forEach((el) => {
-      el.addEventListener("input", recalc);
+async function loadRecentSafe() {
+  recentBody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
+
+  try {
+    let q = supabase
+      .from("form_safe")
+      .select("id, created_at, date, time, employee_name, notes, created_by, org_id")
+      .order("created_at", { ascending: false })
+      .limit(25);
+
+    if (String(ctx.profile?.role || "").toLowerCase() !== "admin" && ctx.profile?.org_id) {
+      q = q.eq("org_id", ctx.profile.org_id);
+    }
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    if (!data?.length) {
+      recentBody.innerHTML = `<tr><td colspan="6" class="muted">No entries yet.</td></tr>`;
+      return;
+    }
+
+    recentBody.innerHTML = data.map((r) => `
+      <tr class="clickRow" data-id="${esc(r.id)}" style="cursor:pointer">
+        <td>${esc(fmtDateTime(r.created_at))}</td>
+        <td>Safe</td>
+        <td>${esc(fmtDate(r.date))}</td>
+        <td>${esc(r.employee_name || "")}</td>
+        <td>${esc((r.notes || "").slice(0, 40))}</td>
+        <td class="mono">${esc(r.id)}</td>
+      </tr>
+    `).join("");
+
+    recentBody.querySelectorAll(".clickRow").forEach((tr) => {
+      tr.addEventListener("click", () => openSafeEntryModal(tr.dataset.id));
     });
-
-    const entryStatus = card.querySelector("#entryStatus");
-    const setEntryStatus = (type, msg) => {
-      entryStatus.className = "status " + (type || "");
-      entryStatus.textContent = msg || "";
-    };
-
-    card.querySelector("#entrySaveBtn")?.addEventListener("click", async () => {
-      setEntryStatus("", "");
-      try {
-        setEntryStatus("ok", "Saving…");
-
-        const payload = {
-          date: card.querySelector("#v_date").value || null,
-          time: card.querySelector("#v_time").value || null,
-          employee_name: card.querySelector("#v_employee").value.trim(),
-          bills_100_qty: int0(card.querySelector("#v_b100").value),
-          bills_50_qty:  int0(card.querySelector("#v_b50").value),
-          bills_20_qty:  int0(card.querySelector("#v_b20").value),
-          bills_10_qty:  int0(card.querySelector("#v_b10").value),
-          bills_5_qty:   int0(card.querySelector("#v_b5").value),
-          bills_1_qty:   int0(card.querySelector("#v_b1").value),
-          reg1_amount_cents: toCents(card.querySelector("#v_reg1").value),
-          reg2_amount_cents: toCents(card.querySelector("#v_reg2").value),
-          quarters_qty: int0(card.querySelector("#v_q").value),
-          dimes_qty:    int0(card.querySelector("#v_d").value),
-          nickels_qty:  int0(card.querySelector("#v_n").value),
-          pennies_qty:  int0(card.querySelector("#v_p").value),
-          notes: card.querySelector("#v_notes").value.trim() || null,
-        };
-
-        const { error: upErr } = await supabase
-          .from("form_safe")
-          .update(payload)
-          .eq("id", id);
-
-        if (upErr) throw upErr;
-
-        setEntryStatus("ok", "✅ Saved.");
-        await loadRecentSafe();
-      } catch (err) {
-        console.error(err);
-        setEntryStatus("err", "❌ Save failed: " + (err?.message || "Unknown error"));
-      }
-    });
-
-    card.querySelector("#entryDeleteBtn")?.addEventListener("click", async () => {
-      setEntryStatus("", "");
-      if (!confirm("Delete this entry? This cannot be undone.")) return;
-      try {
-        setEntryStatus("ok", "Deleting…");
-        const { error: delErr } = await supabase.from("form_safe").delete().eq("id", id);
-        if (delErr) throw delErr;
-        setEntryStatus("ok", "✅ Deleted.");
-        await loadRecentSafe();
-        setTimeout(close, 300);
-      } catch (err) {
-        console.error(err);
-        setEntryStatus("err", "❌ Delete failed: " + (err?.message || "Unknown error"));
-      }
-    });
+  } catch (err) {
+    console.error(err);
+    recentBody.innerHTML = `<tr><td colspan="6" class="muted">Error: ${esc(err?.message || "Unknown error")}</td></tr>`;
   }
 }
 
 async function init() {
-  bindTabs();
+  try {
+    const session = await requireSession();
+    if (!session) return;
 
-  const session = await requireSession();
-  if (!session) return;
+    ctx.user = session.user;
+    ctx.profile = await loadProfile(session.user.id);
 
-  const user = session.user;
-  const profile = await loadProfile(user.id);
+    renderWhoAmI();
 
-  ctx = { user, profile };
+    if (String(ctx.profile?.role || "").toLowerCase() === "admin") {
+      adminLink.style.display = "";
+    }
 
-  const role = String(profile?.role || "user").toUpperCase();
-  whoami.textContent = `${profile.email} • ${fullName(profile)} • ${role}`;
+    bindTabs();
+    mountSafeForm(panels.safe, ctx);
 
-  if (String(profile?.role || "").toLowerCase() === "admin") {
-    adminLink.style.display = "";
+    profileBtn?.addEventListener("click", openProfileModal);
+
+    logoutBtn?.addEventListener("click", async () => {
+      await supabase.auth.signOut();
+      window.location.href = "/";
+    });
+
+    refreshBtn?.addEventListener("click", loadRecentSafe);
+    window.addEventListener("forms:saved", loadRecentSafe);
+
+    await loadRecentSafe();
+  } catch (err) {
+    console.error(err);
+    showPageError(err?.message || "Dashboard failed to load.");
   }
-
-  // mount safe form
-  mountSafeForm(panels.safe, ctx);
-
-  // actions
-  logoutBtn.addEventListener("click", async () => {
-    await supabase.auth.signOut();
-    location.href = "/";
-  });
-
-  profileBtn.addEventListener("click", showProfileModal);
-
-  refreshBtn.addEventListener("click", loadRecentSafe);
-
-  window.addEventListener("forms:saved", () => loadRecentSafe());
-
-  await loadRecentSafe();
 }
 
-init().catch((err) => {
-  console.error(err);
-  whoami.textContent = "Error: " + (err?.message || "Unknown error");
-});
+init();
