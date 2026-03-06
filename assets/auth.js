@@ -1,103 +1,69 @@
-import { supabase } from "./supabase.js";
+import { supabase } from "./supabaseClient.js";
 
-const $ = (id) => document.getElementById(id);
+const emailEl = document.getElementById("email");
+const passEl  = document.getElementById("password");
+const loginBtn = document.getElementById("loginBtn");
+const signupBtn = document.getElementById("signupBtn");
+const forgotBtn = document.getElementById("forgotBtn");
+const statusEl = document.getElementById("status");
 
-function setStatus(el, type, msg) {
-  el.className = "status " + (type || "");
-  el.textContent = msg || "";
+function setStatus(type, msg){
+  statusEl.className = "status " + type;
+  statusEl.textContent = msg;
+}
+function clearStatus(){
+  statusEl.className = "status";
+  statusEl.textContent = "";
 }
 
-function bindTabs() {
-  const tabs = document.querySelectorAll(".tab");
-  tabs.forEach((t) => {
-    t.addEventListener("click", () => {
-      tabs.forEach((x) => x.classList.remove("active"));
-      t.classList.add("active");
-
-      const key = t.dataset.tab;
-      document.querySelectorAll(".panel").forEach((p) => p.classList.add("hide"));
-      document.getElementById(`panel-${key}`).classList.remove("hide");
-    });
-  });
+async function goIfLoggedIn(){
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.user) window.location.href = "/dashboard.html";
 }
 
-async function goDashboardIfLoggedIn() {
-  const { data } = await supabase.auth.getSession();
-  if (data?.session) {
-    location.href = "/dashboard.html";
-  }
-}
+await goIfLoggedIn();
 
-bindTabs();
-goDashboardIfLoggedIn();
+loginBtn.addEventListener("click", async () => {
+  clearStatus();
+  const email = emailEl.value.trim();
+  const password = passEl.value.trim();
+  if (!email || !password) return setStatus("err", "❌ Enter email + password.");
 
-// LOGIN
-const loginForm = $("loginForm");
-const authStatus = $("authStatus");
+  setStatus("ok", "Logging in…");
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) return setStatus("err", "❌ " + error.message);
 
-loginForm?.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  setStatus(authStatus, "", "");
-
-  const email = $("loginEmail").value.trim();
-  const password = $("loginPass").value;
-
-  try {
-    setStatus(authStatus, "ok", "Logging in…");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) throw error;
-    location.href = "/dashboard.html";
-  } catch (err) {
-    console.error(err);
-    setStatus(authStatus, "err", "❌ Login failed: " + (err?.message || "Unknown error"));
-  }
+  setStatus("ok", "✅ Logged in. Redirecting…");
+  window.location.href = "/dashboard.html";
 });
 
-// SIGNUP
-const signupForm = $("signupForm");
-const signupStatus = $("signupStatus");
+signupBtn.addEventListener("click", async () => {
+  clearStatus();
+  const email = emailEl.value.trim();
+  const password = passEl.value.trim();
+  if (!email || !password) return setStatus("err", "❌ Enter email + password.");
 
-signupForm?.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  setStatus(signupStatus, "", "");
+  setStatus("ok", "Creating account…");
+  const { error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: window.location.origin + "/dashboard.html" }
+  });
 
-  const first_name = $("signupFirst").value.trim();
-  const last_name  = $("signupLast").value.trim();
-  const email      = $("signupEmail").value.trim();
-  const password   = $("signupPass").value;
+  if (error) return setStatus("err", "❌ " + error.message);
+  setStatus("ok", "✅ Account created. If email confirmation is on, check your inbox.");
+});
 
-  if (!first_name || !last_name) {
-    return setStatus(signupStatus, "err", "❌ First and last name required.");
-  }
+forgotBtn.addEventListener("click", async () => {
+  clearStatus();
+  const email = emailEl.value.trim();
+  if (!email) return setStatus("err", "❌ Enter your email first.");
 
-  try {
-    setStatus(signupStatus, "ok", "Creating account…");
+  setStatus("ok", "Sending reset email…");
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + "/"
+  });
 
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) throw error;
-
-    // If session exists immediately, write profile now. If not, they must confirm email first.
-    const user = data?.user;
-    if (user?.id) {
-      // Insert/Upsert profile row
-      const { error: pErr } = await supabase
-        .from("profiles")
-        .upsert({
-          id: user.id,
-          email,
-          first_name,
-          last_name,
-          role: "user"
-        }, { onConflict: "id" });
-
-      if (pErr) {
-        console.warn("Profile upsert failed:", pErr);
-      }
-    }
-
-    setStatus(signupStatus, "ok", "✅ Signup successful. If email confirmation is on, check your inbox. Then login.");
-  } catch (err) {
-    console.error(err);
-    setStatus(signupStatus, "err", "❌ Signup failed: " + (err?.message || "Unknown error"));
-  }
+  if (error) return setStatus("err", "❌ " + error.message);
+  setStatus("ok", "✅ Reset email sent (check inbox/spam).");
 });

@@ -13,6 +13,9 @@ const logoutBtn = $("logoutBtn");
 const refreshBtn = $("refreshBtn");
 const recentBody = $("recentBody");
 
+// Optional (if your HTML has it)
+const profileBtn = $("profileBtn") || document.getElementById("profileBtn");
+
 const panels = {
   safe: $("panel-safe"),
   loteria: $("panel-loteria"),
@@ -43,6 +46,16 @@ function toCents(v){
 function money(cents){
   const v = (Number(cents) || 0) / 100;
   return v.toLocaleString(undefined, { style:"currency", currency:"USD" });
+}
+
+function fullNameFromProfile(p){
+  return [p?.first_name, p?.last_name].filter(Boolean).join(" ").trim();
+}
+
+function renderWhoAmI(){
+  const name = fullNameFromProfile(ctx.profile);
+  whoami.textContent =
+    `${ctx.user.email} • ${name ? name + " • " : ""}${String(ctx.profile.role || "user").toUpperCase()}`;
 }
 
 // ---------- session/profile ----------
@@ -88,7 +101,7 @@ function mountCurrentTab(tab) {
   panels[tab].innerHTML = `<div class="muted">Form coming next…</div>`;
 }
 
-// ---------- modal (entry viewer) ----------
+// ---------- modal (entry + profile) ----------
 function ensureModalShell(){
   if (document.getElementById("entryModalOverlay")) return;
 
@@ -143,6 +156,11 @@ function ensureModalShell(){
     .rowTight td{ padding:6px; }
     .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px;}
     .modalStatus{ margin-top:10px; }
+    .danger{
+      border:1px solid rgba(255,90,90,.35) !important;
+      background:rgba(255,90,90,.12) !important;
+      color:#ffd2d2 !important;
+    }
   `;
   document.head.appendChild(style);
 
@@ -151,10 +169,10 @@ function ensureModalShell(){
   overlay.className = "modalOverlay";
   overlay.style.display = "none";
   overlay.innerHTML = `
-    <div class="modalCard" role="dialog" aria-modal="true" aria-label="Entry viewer">
+    <div class="modalCard" role="dialog" aria-modal="true" aria-label="Modal">
       <div class="modalTop">
         <div>
-          <h3 id="entryModalTitle">Entry</h3>
+          <h3 id="entryModalTitle">Modal</h3>
           <div class="sub" id="entryModalSub"></div>
         </div>
         <div class="modalBtns">
@@ -167,14 +185,12 @@ function ensureModalShell(){
   `;
   document.body.appendChild(overlay);
 
-  // close on backdrop click
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) closeEntryModal();
   });
 
   document.getElementById("entryModalClose").addEventListener("click", closeEntryModal);
 
-  // escape closes
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeEntryModal();
   });
@@ -202,6 +218,7 @@ function setModalStatus(type, msg){
   st.textContent = msg;
 }
 
+// ---------- Safe entry modal ----------
 async function openSafeEntry(id){
   openEntryModal();
   document.getElementById("entryModalTitle").textContent = "Cuadre del Safe";
@@ -211,7 +228,6 @@ async function openSafeEntry(id){
   const isAdmin = (ctx?.profile?.role === "admin");
 
   try{
-    // load row (RLS will enforce org access)
     const { data, error } = await supabase
       .from("form_safe")
       .select("*")
@@ -225,7 +241,6 @@ async function openSafeEntry(id){
 
     const body = document.getElementById("entryModalBody");
 
-    // Build editable/view-only UI
     body.innerHTML = `
       <div class="modalGrid2">
         <div>
@@ -316,15 +331,19 @@ async function openSafeEntry(id){
         <b class="mono" id="m_total">${money(calcTotalFromRow(data))}</b>
       </div>
 
-      <div class="actions" style="margin-top:12px; justify-content:flex-end;">
-        ${isAdmin ? `<button class="btn" id="m_save" type="button">Save Changes</button>` : ``}
-        <button class="btn secondary" id="m_close2" type="button">Close</button>
+      <div class="actions" style="margin-top:12px; justify-content:space-between; align-items:center;">
+        <div>
+          ${isAdmin ? `<button class="btn danger" id="m_delete" type="button">Delete</button>` : ``}
+        </div>
+        <div style="display:flex; gap:10px;">
+          ${isAdmin ? `<button class="btn" id="m_save" type="button">Save Changes</button>` : ``}
+          <button class="btn secondary" id="m_close2" type="button">Close</button>
+        </div>
       </div>
     `;
 
     body.querySelector("#m_close2").addEventListener("click", closeEntryModal);
 
-    // Live recalculation in modal
     const recalc = () => {
       const row = readModalToRow();
       document.getElementById("m_bills_sub").textContent = money(calcBills(row));
@@ -332,7 +351,6 @@ async function openSafeEntry(id){
       document.getElementById("m_coins_sub").textContent = money(calcCoins(row));
       document.getElementById("m_total").textContent = money(calcTotalFromRow(row));
 
-      // update each amount cell
       const billDefs = [
         ["bills_100_qty", 10000],
         ["bills_50_qty",  5000],
@@ -369,10 +387,8 @@ async function openSafeEntry(id){
       body.querySelector("#m_save").addEventListener("click", async () => {
         try{
           setModalStatus("ok", "Saving…");
-
           const updated = readModalToRow();
 
-          // Only update editable fields (keep org_id/created_by/created_at unchanged)
           const payload = {
             date: updated.date || null,
             time: updated.time || null,
@@ -400,16 +416,39 @@ async function openSafeEntry(id){
           if (error) throw error;
 
           setModalStatus("ok", "✅ Saved changes.");
-          // refresh recent entries list
           await loadRecentEntries();
         } catch (err){
           console.error(err);
           setModalStatus("err", "❌ Save failed: " + (err?.message || "Check RLS policy for UPDATE."));
         }
       });
+
+      // Admin delete
+      body.querySelector("#m_delete").addEventListener("click", async () => {
+        const ok = confirm("Delete this entry? This cannot be undone.");
+        if (!ok) return;
+
+        try{
+          setModalStatus("ok", "Deleting…");
+
+          const { error } = await supabase
+            .from("form_safe")
+            .delete()
+            .eq("id", id);
+
+          if (error) throw error;
+
+          setModalStatus("ok", "✅ Deleted.");
+          await loadRecentEntries();
+          // close after short tick
+          setTimeout(() => closeEntryModal(), 150);
+        } catch (err){
+          console.error(err);
+          setModalStatus("err", "❌ Delete failed: " + (err?.message || "Check RLS policy for DELETE."));
+        }
+      });
     }
 
-    // helper: read modal values into a "row-like" object
     function readModalToRow(){
       const row = {};
       row.date = body.querySelector("#m_date")?.value || "";
@@ -435,7 +474,6 @@ async function openSafeEntry(id){
       return row;
     }
 
-    // initial recalc
     recalc();
 
   } catch (err){
@@ -491,6 +529,69 @@ function calcTotalFromRow(row){
   return bills + regs + coins;
 }
 
+// ---------- Profile modal ----------
+async function openProfileModal(){
+  openEntryModal();
+  document.getElementById("entryModalTitle").textContent = "Profile";
+  document.getElementById("entryModalSub").textContent = ctx?.user?.email || "";
+  setModalStatus("", "");
+
+  const body = document.getElementById("entryModalBody");
+
+  const first = ctx?.profile?.first_name || "";
+  const last  = ctx?.profile?.last_name || "";
+
+  body.innerHTML = `
+    <div class="modalGrid2">
+      <div>
+        <label>First Name</label>
+        <input id="p_first" type="text" value="${esc(first)}" />
+      </div>
+      <div>
+        <label>Last Name</label>
+        <input id="p_last" type="text" value="${esc(last)}" />
+      </div>
+    </div>
+
+    <div class="miniNote">This updates your profile display name.</div>
+
+    <div class="actions" style="margin-top:12px; justify-content:flex-end;">
+      <button class="btn" id="p_save" type="button">Save</button>
+      <button class="btn secondary" id="p_close" type="button">Close</button>
+    </div>
+  `;
+
+  body.querySelector("#p_close").addEventListener("click", closeEntryModal);
+
+  body.querySelector("#p_save").addEventListener("click", async () => {
+    try{
+      setModalStatus("ok", "Saving…");
+
+      const first_name = (body.querySelector("#p_first")?.value || "").trim();
+      const last_name  = (body.querySelector("#p_last")?.value || "").trim();
+
+      // Update profiles row
+      const { error } = await supabase
+        .from("profiles")
+        .update({ first_name, last_name })
+        .eq("id", ctx.user.id);
+
+      if (error) throw error;
+
+      // update local ctx and header
+      ctx.profile.first_name = first_name;
+      ctx.profile.last_name = last_name;
+      renderWhoAmI();
+
+      setModalStatus("ok", "✅ Profile saved.");
+      setTimeout(() => closeEntryModal(), 250);
+    } catch(err){
+      console.error(err);
+      setModalStatus("err", "❌ Save failed: " + (err?.message || "Check RLS policy for profiles update."));
+    }
+  });
+}
+
 // ---------- recent entries ----------
 async function loadRecentEntries() {
   recentBody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
@@ -500,7 +601,6 @@ async function loadRecentEntries() {
       .from("form_safe")
       .select("id, created_at, org_id, date, employee_name, notes");
 
-    // non-admin only sees org rows
     if (ctx.profile.role !== "admin") {
       q = q.eq("org_id", ctx.profile.org_id);
     }
@@ -528,7 +628,6 @@ async function loadRecentEntries() {
       )
       .join("");
 
-    // CLICK -> open modal
     recentBody.querySelectorAll("tr.rowLink").forEach((tr) => {
       tr.addEventListener("click", async () => {
         const type = tr.getAttribute("data-type");
@@ -553,11 +652,10 @@ async function init() {
     ctx.user = session.user;
     ctx.profile = await loadProfile(session.user.id);
 
-    const fullName = [ctx.profile.first_name, ctx.profile.last_name].filter(Boolean).join(" ").trim();
-    whoami.textContent = `${ctx.user.email} • ${fullName ? fullName + " • " : ""}${String(ctx.profile.role || "user").toUpperCase()}`;
-
+    renderWhoAmI();
     adminLink.style.display = ctx.profile.role === "admin" ? "" : "none";
 
+    // tabs
     document.querySelectorAll(".tab").forEach((btn) => {
       btn.addEventListener("click", () => {
         const tab = btn.getAttribute("data-tab");
@@ -571,6 +669,18 @@ async function init() {
 
     refreshBtn.addEventListener("click", loadRecentEntries);
     window.addEventListener("forms:saved", loadRecentEntries);
+
+    // profile button (if exists)
+    if (profileBtn){
+      profileBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        openProfileModal();
+      });
+    } else {
+      // If profile button exists but uses a different id, you can fix your HTML:
+      // <button id="profileBtn" class="btn secondary" type="button">Profile</button>
+      console.warn("Profile button not found (expected id='profileBtn').");
+    }
 
     logoutBtn.addEventListener("click", async () => {
       await supabase.auth.signOut();
