@@ -2,57 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Compare Forms | Dashboard</title>
   <link rel="stylesheet" href="/assets/styles.css" />
-
-  <!-- Modal styles (kept here so you don't have to edit styles.css) -->
-  <style>
-    .modalOverlay{
-      position:fixed; inset:0;
-      background:rgba(0,0,0,.55);
-      display:flex; align-items:center; justify-content:center;
-      padding:18px;
-      z-index:9999;
-    }
-    .modalOverlay.hide{ display:none !important; }
-    .modal{
-      width:min(1000px, 98vw);
-      max-height:85vh;
-      overflow:auto;
-      background:rgba(15,17,27,.98);
-      border:1px solid rgba(255,255,255,.12);
-      border-radius:16px;
-      box-shadow:0 20px 60px rgba(0,0,0,.55);
-      padding:16px;
-    }
-    .modalHeader{
-      display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
-      margin-bottom:10px;
-    }
-    .modalTitle{ margin:0; }
-    .modalMeta{ color:rgba(243,246,255,.70); font-size:13px; margin-top:4px; }
-    .modalGrid{
-      display:grid;
-      grid-template-columns: 1fr 1fr;
-      gap:12px;
-    }
-    @media(max-width:900px){ .modalGrid{ grid-template-columns:1fr; } }
-    .readonlyBadge{
-      display:inline-block;
-      padding:6px 10px;
-      border-radius:999px;
-      border:1px solid rgba(255,255,255,.14);
-      background:rgba(255,255,255,.04);
-      font-size:12px;
-      color:rgba(243,246,255,.85);
-      margin-left:10px;
-    }
-    .clickRow{ cursor:pointer; }
-    .clickRow:hover{ background:rgba(255,255,255,.03); }
-  </style>
 </head>
-
 <body>
   <div class="wrap">
     <div class="top">
@@ -62,35 +15,33 @@
       </div>
 
       <div class="actions">
-        <a class="btn secondary" href="/admin.html" id="adminLink" style="display:none">Admin</a>
-        <a class="btn secondary" href="/profile.html" id="profileLink">Profile</a>
+        <button class="btn secondary" id="profileBtn" type="button">Profile</button>
+        <a class="btn secondary hide" href="/admin.html" id="adminLink">Admin</a>
         <button class="btn secondary" id="logoutBtn" type="button">Logout</button>
       </div>
     </div>
 
     <div class="card">
       <div class="tabs">
-        <button class="tab active" data-tab="safe">Cuadre del Safe</button>
-        <button class="tab" data-tab="loteria">Cuadre de Lotería</button>
-        <button class="tab" data-tab="cashpay">Cash Payment</button>
-        <button class="tab" data-tab="transfer">Transfer / Shrinkage</button>
-        <button class="tab" data-tab="daily">Cuadre Diario</button>
+        <button class="tab active" data-tab="safe" type="button">Cuadre del Safe</button>
+        <button class="tab" data-tab="loteria" type="button">Cuadre de Lotería</button>
+        <button class="tab" data-tab="cashpay" type="button">Cash Payment</button>
+        <button class="tab" data-tab="transfer" type="button">Transfer / Shrinkage</button>
+        <button class="tab" data-tab="daily" type="button">Cuadre Diario</button>
       </div>
 
       <div id="panel-safe" class="panel"></div>
-      <div id="panel-loteria" class="panel hide"></div>
-      <div id="panel-cashpay" class="panel hide"></div>
-      <div id="panel-transfer" class="panel hide"></div>
-      <div id="panel-daily" class="panel hide"></div>
-
-      <div id="formStatus" class="status" role="status" aria-live="polite"></div>
+      <div id="panel-loteria" class="panel hide"><div class="muted">Coming next…</div></div>
+      <div id="panel-cashpay" class="panel hide"><div class="muted">Coming next…</div></div>
+      <div id="panel-transfer" class="panel hide"><div class="muted">Coming next…</div></div>
+      <div id="panel-daily" class="panel hide"><div class="muted">Coming next…</div></div>
     </div>
 
     <div class="card">
       <div class="actions" style="justify-content:space-between">
         <div>
           <h2 style="margin:0">Recent Entries</h2>
-          <div class="muted">Click an entry to view. Users can view only; admins can edit.</div>
+          <div class="muted">Click an entry to view. Users can view only; admins can edit and delete.</div>
         </div>
         <button class="btn secondary" id="refreshBtn" type="button">Refresh</button>
       </div>
@@ -110,27 +61,6 @@
           <tbody id="recentBody"></tbody>
         </table>
       </div>
-    </div>
-  </div>
-
-  <!-- VIEW/EDIT MODAL -->
-  <div id="entryOverlay" class="modalOverlay hide" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="entryTitle">
-      <div class="modalHeader">
-        <div>
-          <h2 id="entryTitle" class="modalTitle">Entry</h2>
-          <div id="entryMeta" class="modalMeta"></div>
-        </div>
-        <div class="actions">
-          <span id="entryModeBadge" class="readonlyBadge">VIEW ONLY</span>
-          <button id="entryEditBtn" class="btn secondary" type="button" style="display:none">Edit</button>
-          <button id="entrySaveBtn" class="btn" type="button" style="display:none">Save</button>
-          <button id="entryCloseBtn" class="btn secondary" type="button">Close</button>
-        </div>
-      </div>
-
-      <div id="entryStatus" class="status" role="status" aria-live="polite"></div>
-      <div id="entryBody"></div>
     </div>
   </div>
 
