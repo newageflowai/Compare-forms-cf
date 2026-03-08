@@ -1,4 +1,3 @@
-// /public/assets/forms/safe.js
 import { supabase } from "../supabase.js";
 
 const DENOMS = {
@@ -29,7 +28,19 @@ function money(cents){
   const v = (Number(cents) || 0) / 100;
   return v.toLocaleString(undefined, { style:"currency", currency:"USD" });
 }
-
+function todayISODate(){
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+function nowHHMM(){
+  const d = new Date();
+  const hh = String(d.getHours()).padStart(2,"0");
+  const mm = String(d.getMinutes()).padStart(2,"0");
+  return `${hh}:${mm}`;
+}
 function rowInput({ id, label, placeholder = "", type="text" }){
   return `
     <div>
@@ -38,8 +49,7 @@ function rowInput({ id, label, placeholder = "", type="text" }){
     </div>
   `;
 }
-
-function qtyRow({ key, label }){
+function qtyRow({ key, label, unitCents }){
   const id = `safe_${key}`;
   const amtId = `safe_amt_${key}`;
   return `
@@ -51,22 +61,6 @@ function qtyRow({ key, label }){
       <td class="mono" id="${amtId}">${money(0)}</td>
     </tr>
   `;
-}
-
-function todayISODate(){
-  // YYYY-MM-DD local
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth()+1).padStart(2,"0");
-  const dd = String(d.getDate()).padStart(2,"0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function nowHHMM(){
-  const d = new Date();
-  const hh = String(d.getHours()).padStart(2,"0");
-  const mm = String(d.getMinutes()).padStart(2,"0");
-  return `${hh}:${mm}`;
 }
 
 export function mountSafeForm(container, ctx){
@@ -90,7 +84,7 @@ export function mountSafeForm(container, ctx){
             </tr>
           </thead>
           <tbody>
-            ${DENOMS.bills.map(b => qtyRow({ key:b.key, label:b.label })).join("")}
+            ${DENOMS.bills.map(b => qtyRow({ key:b.key, label:b.label, unitCents:b.valueCents })).join("")}
           </tbody>
           <tfoot>
             <tr>
@@ -106,7 +100,7 @@ export function mountSafeForm(container, ctx){
         ${rowInput({ id:"safe_reg1", label:"Register 1 Amount", placeholder:"0.00", type:"text" })}
         ${rowInput({ id:"safe_reg2", label:"Register 2 Amount", placeholder:"0.00", type:"text" })}
       </div>
-      <div class="muted" style="margin-top:6px">Tip: you can type 2332.62 (no $ needed).</div>
+      <div class="muted" style="margin-top:6px">Tip: type 2332.62 (no $ needed).</div>
 
       <div class="totalsRow">
         <div class="muted">Registers Subtotal</div>
@@ -124,7 +118,7 @@ export function mountSafeForm(container, ctx){
             </tr>
           </thead>
           <tbody>
-            ${DENOMS.coins.map(c => qtyRow({ key:c.key, label:c.label })).join("")}
+            ${DENOMS.coins.map(c => qtyRow({ key:c.key, label:c.label, unitCents:c.valueCents })).join("")}
           </tbody>
           <tfoot>
             <tr>
@@ -148,7 +142,7 @@ export function mountSafeForm(container, ctx){
         <button class="btn secondary" id="safe_clear" type="button">Clear</button>
       </div>
 
-      <div id="safe_status" class="status" role="status" aria-live="polite"></div>
+      <div id="safe_status" class="status hide" role="status" aria-live="polite"></div>
     </form>
   `;
 
@@ -169,11 +163,12 @@ export function mountSafeForm(container, ctx){
   const totalEl         = container.querySelector("#safe_total");
 
   function setStatus(type, msg){
-    statusEl.className = "status " + type; // ok | err
+    statusEl.className = "status " + type;
     statusEl.textContent = msg;
+    statusEl.classList.remove("hide");
   }
   function clearStatus(){
-    statusEl.className = "status";
+    statusEl.className = "status hide";
     statusEl.textContent = "";
   }
 
@@ -208,75 +203,55 @@ export function mountSafeForm(container, ctx){
     return { bills, reg1, reg2, coins, total: bills + regs + coins };
   }
 
-  // Defaults: today + now, employee = first name if available
-  dateEl.value = todayISODate();
-  timeEl.value = nowHHMM();
-  if (ctx?.profile?.first_name && !empEl.value) empEl.value = ctx.profile.first_name;
-
-  // live calc
   container.querySelectorAll("input,textarea").forEach(el => {
     el.addEventListener("input", () => { calc(); clearStatus(); });
   });
 
-  // clear
   container.querySelector("#safe_clear").addEventListener("click", () => {
-    // keep date/time defaults on clear
     form.reset();
-
-    dateEl.value = todayISODate();
-    timeEl.value = nowHHMM();
-    empEl.value = (ctx?.profile?.first_name || "");
-
     [...DENOMS.bills, ...DENOMS.coins].forEach(x => {
       const el = container.querySelector(`#safe_${x.key}`);
       if (el) el.value = "0";
     });
     reg1El.value = "";
     reg2El.value = "";
+    dateEl.value = todayISODate();
+    timeEl.value = nowHHMM();
     calc();
     clearStatus();
   });
 
-  // submit -> Supabase insert
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
     clearStatus();
 
-    // Always stamp current date/time at SAVE time
-    const date = todayISODate();
-    const time = nowHHMM();
-    dateEl.value = date;
-    timeEl.value = time;
+    if (!dateEl.value) dateEl.value = todayISODate();
+    if (!timeEl.value) timeEl.value = nowHHMM();
 
+    const date = (dateEl.value || "").trim();
+    const time = (timeEl.value || "").trim();
     const employee_name = (empEl.value || "").trim();
     const notes = (notesEl.value || "").trim();
 
     if (!ctx?.user?.id) return setStatus("err", "❌ Not logged in.");
-    if (!ctx?.profile?.org_id && ctx?.profile?.role !== "admin") {
-      return setStatus("err", "❌ Your profile has no org assigned. Admin must assign your org.");
-    }
+    if (!date) return setStatus("err", "❌ Date is required.");
     if (!employee_name) return setStatus("err", "❌ Employee name is required.");
 
     const computed = calc();
 
-    // IMPORTANT: your DB columns are "date" and "time"
     const payload = {
-      org_id: ctx.profile.role === "admin" ? (ctx.profile.org_id ?? null) : ctx.profile.org_id,
+      org_id: ctx.profile?.org_id ?? null,
       created_by: ctx.user.id,
-      date,                 // ✅ matches DB
-      time: time || null,   // ✅ matches DB
+      date,
+      time: time || null,
       employee_name,
       reg1_amount_cents: computed.reg1,
       reg2_amount_cents: computed.reg2,
       notes: notes || null,
     };
 
-    for (const b of DENOMS.bills){
-      payload[b.key] = int0(container.querySelector(`#safe_${b.key}`)?.value);
-    }
-    for (const c of DENOMS.coins){
-      payload[c.key] = int0(container.querySelector(`#safe_${c.key}`)?.value);
-    }
+    for (const b of DENOMS.bills) payload[b.key] = int0(container.querySelector(`#safe_${b.key}`)?.value);
+    for (const c of DENOMS.coins) payload[c.key] = int0(container.querySelector(`#safe_${c.key}`)?.value);
 
     try {
       submitBtn.disabled = true;
@@ -294,16 +269,22 @@ export function mountSafeForm(container, ctx){
       window.dispatchEvent(new CustomEvent("forms:saved", { detail: { type:"safe", id:data.id } }));
     } catch (err) {
       console.error(err);
-      setStatus("err", "❌ Save failed: " + (err?.message || "Check RLS policies."));
+      setStatus("err", "❌ Save failed: " + (err?.message || "Unknown error"));
     } finally {
       submitBtn.disabled = false;
     }
   });
 
-  // initial calc
   [...DENOMS.bills, ...DENOMS.coins].forEach(x => {
     const el = container.querySelector(`#safe_${x.key}`);
     if (el && (el.value === "" || el.value == null)) el.value = "0";
   });
+
+  dateEl.value = todayISODate();
+  timeEl.value = nowHHMM();
+
+  const fullName = [ctx?.profile?.first_name, ctx?.profile?.last_name].filter(Boolean).join(" ").trim();
+  if (fullName) empEl.value = fullName;
+
   calc();
 }
