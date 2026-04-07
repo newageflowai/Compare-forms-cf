@@ -195,34 +195,6 @@ function showProfileModal() {
   });
 }
 
-function loteriaCalc(row) {
-  const entries =
-    int0(row.scratch_10_am) +
-    int0(row.scratch_10_pm) +
-    int0(row.draw_game_sales_am) +
-    int0(row.draw_game_sales_pm) +
-    int0(row.cash_deposit_am) +
-    int0(row.cash_deposit_pm);
-
-  const exits =
-    int0(row.draw_game_cashes_am) +
-    int0(row.draw_game_cashes_pm) +
-    int0(row.draw_promo_plays_am) +
-    int0(row.draw_promo_plays_pm) +
-    int0(row.draw_game_cancels_am) +
-    int0(row.draw_game_cancels_pm) +
-    int0(row.instant_cashes_am) +
-    int0(row.instant_cashes_pm) +
-    int0(row.to_deposit_am) +
-    int0(row.to_deposit_pm) +
-    int0(row.refund_am) +
-    int0(row.refund_pm);
-
-  const starting = int0(row.starting_balance_cents);
-  const balance = starting + entries - exits;
-  return { entries, exits, balance };
-}
-
 async function openSafeEntryModal(id) {
   const { data, error } = await supabase
     .from("form_safe")
@@ -331,6 +303,34 @@ async function openSafeEntryModal(id) {
   }
 }
 
+function loteriaCalc(row) {
+  const entries =
+    int0(row.scratch_10_am) +
+    int0(row.scratch_10_pm) +
+    int0(row.draw_game_sales_am) +
+    int0(row.draw_game_sales_pm) +
+    int0(row.cash_deposit_am) +
+    int0(row.cash_deposit_pm);
+
+  const exits =
+    int0(row.draw_game_cashes_am) +
+    int0(row.draw_game_cashes_pm) +
+    int0(row.draw_promo_plays_am) +
+    int0(row.draw_promo_plays_pm) +
+    int0(row.draw_game_cancels_am) +
+    int0(row.draw_game_cancels_pm) +
+    int0(row.instant_cashes_am) +
+    int0(row.instant_cashes_pm) +
+    int0(row.to_deposit_am) +
+    int0(row.to_deposit_pm) +
+    int0(row.refund_am) +
+    int0(row.refund_pm);
+
+  const starting = int0(row.starting_balance_cents);
+  const balance = starting + entries - exits;
+  return { entries, exits, balance };
+}
+
 async function openLoteriaEntryModal(id) {
   const { data, error } = await supabase
     .from("form_loteria")
@@ -352,7 +352,7 @@ async function openLoteriaEntryModal(id) {
   const body = document.getElementById("entryModalBody");
   body.innerHTML = `
     <div class="grid2">
-      <div><label>Date</label><input id="l_date" type="date" value="${esc(data.date || "")}" ${isAdmin ? "" : "disabled"} /></div>
+      <div><label>Date</label><input id="l_date" type="date" value="${esc(data.date || data.form_date || "")}" ${isAdmin ? "" : "disabled"} /></div>
       <div><label>Employee Name</label><input id="l_employee" value="${esc(data.employee_name || "")}" ${isAdmin ? "" : "disabled"} /></div>
     </div>
 
@@ -456,8 +456,11 @@ async function openLoteriaEntryModal(id) {
       try {
         setModalStatus("ok", "Saving…");
 
+        const selectedDate = body.querySelector("#l_date").value || null;
+
         const payload = {
-          date: body.querySelector("#l_date").value || null,
+          date: selectedDate,
+          form_date: selectedDate,
           employee_name: body.querySelector("#l_employee").value.trim() || null,
 
           starting_balance_cents: toCents(body.querySelector("#l_starting_balance").value),
@@ -526,16 +529,13 @@ async function loadRecentEntries() {
   recentBody.innerHTML = `<tr><td colspan="6" class="muted">Loading…</td></tr>`;
 
   try {
-    const safeQ = supabase
+    let safeQuery = supabase
       .from("form_safe")
       .select("id, created_at, date, employee_name, notes, org_id");
 
-    const lotQ = supabase
+    let lotQuery = supabase
       .from("form_loteria")
       .select("id, created_at, date, employee_name, notes, org_id");
-
-    let safeQuery = safeQ;
-    let lotQuery = lotQ;
 
     if (String(ctx.profile.role || "").toLowerCase() !== "admin" && ctx.profile.org_id) {
       safeQuery = safeQuery.eq("org_id", ctx.profile.org_id);
@@ -550,19 +550,17 @@ async function loadRecentEntries() {
     if (safeErr) throw safeErr;
     if (lotErr) throw lotErr;
 
-    const allRows = [
+    const rows = [
       ...(safeRows || []).map(r => ({ ...r, form_type: "safe" })),
       ...(lotRows || []).map(r => ({ ...r, form_type: "loteria" }))
-    ];
+    ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    allRows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-    if (!allRows.length) {
+    if (!rows.length) {
       recentBody.innerHTML = `<tr><td colspan="6" class="muted">No entries yet.</td></tr>`;
       return;
     }
 
-    recentBody.innerHTML = allRows.slice(0, 25).map((r) => `
+    recentBody.innerHTML = rows.slice(0, 25).map((r) => `
       <tr class="rowLink" data-type="${esc(r.form_type)}" data-id="${esc(r.id)}" style="cursor:pointer">
         <td>${esc(fmtDT(r.created_at))}</td>
         <td>${r.form_type === "safe" ? "Safe" : "Lotería"}</td>
